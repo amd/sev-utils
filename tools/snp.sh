@@ -187,7 +187,7 @@ install_nasm_from_source() {
 
 install_dependencies() {
   local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  source "${HOME}/.cargo/env" 2>/dev/null
+  source "${HOME}/.cargo/env" 2>/dev/null || true
 
   if [ -f "${dependencies_installed_file}" ]; then
     echo -e "Dependencies previously installed"
@@ -195,7 +195,7 @@ install_dependencies() {
   fi
 
   # Build dependencies
-  sudo apt install -y build-essential
+  sudo apt install -y build-essential git
 
   # qemu dependencies
   sudo apt install -y ninja-build pkg-config
@@ -209,6 +209,7 @@ install_dependencies() {
   install_nasm_from_source
 
   # kernel dependencies
+  sudo apt install -y bc rsync
   sudo apt install -y flex bison libncurses-dev libssl-dev libelf-dev dwarves zstd debhelper
 
   # dracut dependencies
