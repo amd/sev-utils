@@ -85,13 +85,8 @@ GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
-# $GENERATED_INITRD_BIN initialized in save_binary_paths()
-# Reason
-# Creation of /boot/<inital ramdisk image(initrd.img)> from kernel package installation varies as per linux distribution: 
-    # For UBUNTU, it is /boot/initrd.img-<kernel-version>  
-    # For RHEL, fedora it is /initramfs-<kernel-version>.img 
-# For standardizing, I want to try creating inital ramdisk image manually (apart from intrd which comes from kernel package installaion) using commands like dracut, 
-# but I wanted to confirm before I try
+GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
+
 
 # URLs and repos
 AMDSEV_URL="https://github.com/LakshmiSaiHarika/AMDSEV.git"
@@ -100,7 +95,10 @@ AMDSEV_NON_UPM_BRANCH="sev-snp-devel"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.3.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
-# CLOUD_INIT_IMAGE_URL initialized under set_cloud_init_url_based_on_linux_distribution()
+CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+UBUNTU_CLOUD_INIT_IMAGE_URL=" "
+REDHAT_CLOUD_INIT_IMAGE_URL=" "
+FEDORA_CLOUD_INIT_IMAGE_URL=" "
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 
 
@@ -213,70 +211,214 @@ install_sev_snp_measure() {
   pip install sev-snp-measure
 }
 
+
+
+ubuntu_install_dependencies() {
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+  
+  check_if_dependencies_installed
+
+  # If dependencies already exist
+  if [ $dependencies_installed -eq 1 ]; then
+    return 0
+  fi
+
+  # Build dependencies
+  sudo apt install -y build-essential git
+
+  # ACL for setting access to /dev/sev
+  sudo apt install -y acl
+  
+  # qemu dependencies
+  sudo apt install -y ninja-build pkg-config
+  sudo apt install -y libglib2.0-dev
+  sudo apt install -y libpixman-1-dev
+  sudo apt install -y libslirp-dev
+  
+  # ovmf dependencies
+  sudo apt install -y python-is-python3 uuid-dev iasl
+  
+  #sudo apt install -y nasm
+  sudo apt purge nasm
+  install_nasm_from_source
+
+  # kernel dependencies
+  sudo apt install -y bc rsync
+  sudo apt install -y flex bison libncurses-dev libssl-dev libelf-dev dwarves zstd debhelper
+
+  # dracut dependencies
+  # dracut-core in native distro package manager too old with many issues. It is now
+  # downloaded via source tarball URL in the environment variable above.
+  # The asciidoc package is huge. It is commented because it is only needed for lsinitrd, and
+  # the dracut build commands avoid the lsinitrd build.
+  # The dracut initrd build is currently not working. Devices are failing to mount using the
+  # dracut built initrd. This dependency is removed for now due to this reason. For now,
+  # initrd is installed with the kernel debian package on the guest, and then scp-ed back to
+  # the host for direct-boot use.
+  sudo apt install -y pkg-config libkmod-dev
+  #sudo apt install -y asciidoc
+  #sudo apt install -y dracut-core
+
+  # cloud-utils dependency
+  # genisoimage for userdata and metadata seed
+  sudo apt install -y cloud-image-utils genisoimage curl
+
+  # Virtualization tools for resizing image
+  # virt-resize currently does not work with cloud-init images. It changes the partition 
+  # names and grub gets messed up. This dependency is removed for now due to this reason.
+  #sudo apt install -y libguestfs-tools
+  sudo apt install -y qemu-utils
+
+  # sev-snp-measure
+  sudo apt install -y python3-pip
+}
+
+
+rhel_subscription_mgr_register(){
+	local subscription_manager_status=$(sudo subscription-manager status| grep "Overall Status" )
+
+	# Add different keyterms for RedHat system unregister status like unknown, unregister, etc.
+	local different_words_for_unregister=( "unknown" "unregister"  )
+
+	# Convert to lowercase for case insesitive match
+	local subscription_manager_status=${subscription_manager_status,,}
+
+	# Register only when the system subscription status is unregistered.
+	for each_word in "${different_words_for_unregister[@]}";do
+		case "${subscription_manager_status}" in
+			*"$each_word"*)
+				
+				# Prompt for values only if env var not set
+				if [ -z $RHEL_SUBS_MGR_USER ] &&  [ -z $RHEL_SUBS_MGR_PASS ]; then
+					rhel_subscription_mgr_set_login
+				fi
+				
+				# Activate RedHat Subscription
+				sudo subscription-manager register --username ${RHEL_SUBS_MGR_USER} --password ${RHEL_SUBS_MGR_PASS} --force
+				break
+				;;
+		esac
+	done
+}
+
+rhel_install_dependencies() {
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+    
+  # Step 1: Activate RedHat Subscription
+  rhel_subscription_mgr_register
+
+  # Build dependencies
+  sudo dnf install -y git
+  sudo dnf install -y make automake gcc gcc-c++ kernel-devel 
+
+  # Enable RedHat Repository for qemu dependencies
+  sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+
+  # qemu dependencies
+  sudo dnf install -y ninja-build
+  sudo dnf install -y pkg-config
+  sudo dnf install  -y glib2-devel
+  sudo dnf install  -y pixman-devel
+  sudo dnf install -y libslirp-devel
+   
+  # ovmf dependencies
+  sudo dnf install -y uuid-devel
+  sudo dnf install -y iasl
+  sudo dnf remove nasm
+  install_nasm_from_source
+
+  # kernel dependencies
+  sudo dnf install -y rsync
+  sudo dnf install -y ncurses-devel
+  
+  # libssl-dev is openssl-devel in RHEL
+  # rpm-build -- Scripts and executable programs used to build packages
+  sudo dnf install -y rpm-build
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+  
+  # sev-snp-measure
+  sudo dnf install -y python3-pip
+  
+  # Dependencies for install_common_dependencies
+  sudo dnf install -y curl
+
+  # Handles grub menu config 
+  sudo dnf info -y grubby
+}
+
 install_dependencies(){
-  # Distribution specific installation
-  # Convert string to lowercase for case insensitive linux distr match
-  case ${ID,,} in
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+
+  if [ -f "${dependencies_installed_file}" ]; then
+    echo -e "Dependencies previously installed"
+    return 0
+  fi
+
+  # Linux Distribution specific installation
+  case ${LINUX_TYPE} in
     ubuntu)
       ubuntu_install_dependencies
       ;;
     rhel)
       rhel_install_dependencies
+      # Unregister after installing all rpm packages
+      sudo subscription-manager unregister
       ;;
   esac
+  
+  echo "true" > "${dependencies_installed_file}"
+}
+
+ubuntu_set_grub_default_snp(){
+  # Get the path to host kernel and the version for setting grub default
+  identify_host_kernel_version
+  local host_kernel_version=${HOST_SNP_KERNEL_VERSION}
+
+  if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
+    echo -e "Default grub already has SNP [${host_kernel_version}] set"
+    return 0
+  fi
+
+  # Retrieve snp menuitem name from grub.cfg
+  local snp_menuitem_name=$(cat /boot/grub/grub.cfg \
+    | grep "menuentry.*${host_kernel_version}" \
+    | grep -v "(recovery mode)" \
+    | grep -o -P "(?<=').*" \
+    | grep -o -P "^[^']*")
+
+  # Create default grub backup
+  sudo cp /etc/default/grub /etc/default/grub_bkup
+  
+  # Replace grub default with snp menuitem name
+  sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"Advanced options for Ubuntu>${snp_menuitem_name}\"|g" "/etc/default/grub"
+  
+  sudo update-grub
+}
+
+grubby_to_set_geub_default_snp(){  
+  # Get the path to host kernel package and the version for setting grub default
+  identify_host_kernel_version
+  local host_snp_kernel_version="vmlinuz-${HOST_SNP_KERNEL_VERSION}"    
+
+  # check if the default kernel is set to latest snp kernel version
+  local default_grub_kernel=$(sudo grubby --default-kernel)
+
+  # Setting default to the snp kernel
+  sudo grubby --set-default="$host_snp_kernel_version"
 }
 
 set_grub_default_snp() {
-  case ${ID,,} in
+  case ${LINUX_TYPE} in
     ubuntu)
-      # Get the path to host kernel and the version for setting grub default
-      local host_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/host/debian/linux-image/boot/vmlinuz*"))
-      local host_kernel_version=$(echo "${host_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
-
-      if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
-        echo -e "Default grub already has SNP [${host_kernel_version}] set"
-        return 0
-      fi
-
-      # Retrieve snp menuitem name from grub.cfg
-      local snp_menuitem_name=$(cat /boot/grub/grub.cfg \
-        | grep "menuentry.*${host_kernel_version}" \
-        | grep -v "(recovery mode)" \
-        | grep -o -P "(?<=').*" \
-        | grep -o -P "^[^']*")
-
-      # Create default grub backup
-      sudo cp /etc/default/grub /etc/default/grub_bkup
-      
-      # Replace grub default with snp menuitem name
-      sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"Advanced options for Ubuntu>${snp_menuitem_name}\"|g" "/etc/default/grub"
-      
-      sudo update-grub
+      ubuntu_set_grub_default_snp
       ;;
 
-    rhel) 
-      # Get the path to host kernel package and the version for setting grub default
-      
-      # From AMDSEV build for RedHat, we get kernel-<version>.rpm package
-      # (example) For RHEL, we get /linux/kernel-6.5.0_rc2_snp_host_ad9c0bf475ec-1.x86_64.rpm package
-      local host_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/kernel-[0-9]*host*.rpm"))   
-      local host_kernel_version=$(echo "${host_kernel}" | awk -F'-' '{print $2}')
-      
-      #After build, SNP Host kernel RPM Package Name has "_" in between(ex:kernel-6.5.0_rc2_snp_host_ad9c0bf475ec-1.x86_64.rpm)
-      #From /boot/, we have vmlinuz-6.5.0-rc2-snp-host-ad9c0bf475ec
-      #Getting correct snp kernel item for setting default, substituting Host kernel version from package name with '-'
-      local host_snp_kernel_version="vmlinuz-${host_kernel_version//_/-}"    
-
-      # Setting default to the snp kernel
-      # Note: Tested below command for present default-kernel=6.5.0-rc2-snp-host-ad9c0bf475ec before setting default
-      # Below command works even if the present default kernel version is same as host snp kernel package build
-      # Hence, giving no error
-      sudo grubby --set-default="$host_snp_kernel_version"
-
-      # Getting default kernel info
-      echo " Default kernel is:"
-      sudo grubby --default-kernel
-        ;;
+    rhel | fedora) 
+      grubby_to_set_geub_default_snp
+      ;;
   esac
 }
 
@@ -329,7 +471,6 @@ EOF
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
 
-  # Download ubuntu 20.04 and change name
   set_cloud_init_url_based_on_linux_distribution
   wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
 }
@@ -467,37 +608,12 @@ build_guest_initrd() {
 }
 
 save_binary_paths() {
-  # Initialize variable based on linux distribution type
-  case ${ID,,} in
-    ubuntu)
-      local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-      local guest_kernel_version=$(ls "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
-      
-      # Using initd for ubuntu based on /boot/
-      GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${guest_kernel_version}"
-      ;;
+  # Referring to bzImage copied file
+  local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz*"))
+  identify_guest_kernel_version
+  GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${GUEST_SNP_KERNEL_VERSION}"
 
-    rhel)
-      # Get snp guest version from snp guest kernel rpm pakage name
-      local guest_kernel_rpm_pckg=$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/kernel-[0-9]*snp_guest*)
-      local rhel_kernel_name=$(basename "$guest_kernel_rpm_pckg")
-      local guest_kernel_version=$(echo "$rhel_kernel_name"| cut -d'-' -f2)
-
-      # Get Host CPU Architecture info( like: x86_64. x86.. so on)
-      # My Assumption: Guest CPU has same cpu architecture as host architecture 
-      # Reason: Guest using CPU type "host" may increase the VM performance
-      local host_arch=$(arch)
-      
-      # Copy and rename guest snp kernel from bzImage to vmlinuz
-      local bzImage_file=$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/guest/arch/$host_arch/boot/bzImage)
-      cp -v $bzImage_file ${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-$guest_kernel_version
-
-      # Using initramfs for RHEL based on /boot/
-      local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz*"))
-      GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initramfs-${guest_kernel_version}.img"
-      ;;
-  esac
-
+ 
 # Save binary paths in source file
 cat > "${SETUP_WORKING_DIR}/source-bins" <<EOF
 QEMU_BIN="${SETUP_WORKING_DIR}/AMDSEV/qemu/build/qemu-system-x86_64"
@@ -505,6 +621,23 @@ OVMF_BIN="${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/OvmfX64/DEBUG_GCC5/FV/OVMF.fd"
 INITRD_BIN="${GENERATED_INITRD_BIN}"
 KERNEL_BIN="${guest_kernel}"
 EOF
+
+  # Not sure: To check if save_binary_path is called from setup_and_launch_guest()
+
+  # if [[ ${FUNCNAME[1]} -eq "setup_and_launch_guest" ]]; then
+  #     echo "GENERATED_INITRD=${1}" >> "${SETUP_WORKING_DIR}/source-bins"
+  # fi
+
+  # Update GENERATED_INITRD_PATH with $1 (correct file path after guest kernel installation)
+  if [ ! -z "$1" ]; then 
+      
+      local line_starts_with="INITRD_BIN=" 
+      local replace_with="INITRD_BIN=$1"   
+      local file_to_replace="${SETUP_WORKING_DIR}/source-bins"
+
+      # Using sed to replace the line starting with the specified word
+      sed -i "/^${line_starts_with}.*/c\\${replace_with}" "${file_to_replace}"
+  fi
 }
 
 copy_launch_binaries() {
@@ -603,6 +736,51 @@ stop_guests() {
   echo -e "No qemu processes running!"
 }
 
+identify_guest_kernel_version(){
+  # Get latest guest snp kernel package file path
+  local GUEST_SNP_KERNEL_PCKG_PATH=$(ls -tr  ${SETUP_WORKING_DIR}/AMDSEV/linux/*snp*| grep -v header| grep -v host| grep -v dbg| head -1)
+
+  if [ ! -n "$GUEST_SNP_KERNEL_PCKG_PATH" ]; then 
+    echo "Host kernel package not found, "
+    return 0
+  fi
+
+  # Query for the vmlinuz-<guest snp kernel> file from guest package without pckg install
+  case ${LINUX_TYPE} in
+  ubuntu) 
+  GUEST_SNP_KERNEL_FILE=$(dpkg -c $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
+  ;;
+
+  rhel | fedora)
+    GUEST_SNP_KERNEL_FILE=$(rpm -qlp $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
+    ;;
+  esac
+  GUEST_SNP_KERNEL_VERSION=$(echo "${GUEST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+}
+
+identify_host_kernel_version(){
+  # Get latest host snp kernel package file path
+  local HOST_SNP_KERNEL_PCKG_PATH=$(ls -tr  ${SETUP_WORKING_DIR}/AMDSEV/linux/*snp*| grep -v header| grep -v guest| grep -v dbg| head -1)
+
+  if [ ! -n "$HOST_SNP_KERNEL_PCKG_PATH" ]; then 
+    echo "Host kernel package not found, "
+    return 0
+  fi
+
+  # Query for the vmlinuz-<host snp kernel> file from guest package without pckg install
+  case ${LINUX_TYPE} in
+  ubuntu) 
+    HOST_SNP_KERNEL_FILE=$(dpkg -c $HOST_KERNEL_PCKG_PATH| grep vmlinuz*)
+    ;;
+
+  rhel | fedora)
+    HOST_SNP_KERNEL_FILE=$(rpm -qlp $HOST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
+    ;;
+  esac
+
+  HOST_SNP_KERNEL_VERSION=$(echo "${HOST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+}
+
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -625,9 +803,17 @@ build_and_install_amdsev() {
   # Build and copy files
   ./build.sh --package
   sudo cp kvm.conf /etc/modprobe.d/
+
+  # Get guest kernel version from the package
+  identify_guest_kernel_version
+
+  # bzImage file location is same for ubuntu and RedHat
+  local bzImage_file=$(find ${SETUP_WORKING_DIR}/AMDSEV/linux/guest -name "bzImage"| head -1)
+  cp -v $bzImage_file ${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-$GUEST_SNP_KERNEL_VERSION
   
-  # Install
-  cd $(ls -d snp-release-* | head -1)
+  # Install latest snp-release
+  cd $(ls -ltd snp-release*| grep -v gz| head -1)
+
   sudo ./install.sh
   
   popd >/dev/null
@@ -647,6 +833,7 @@ build_and_install_amdsev() {
   # Save binary paths in source file
   save_binary_paths
 }
+
 
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
@@ -685,14 +872,21 @@ setup_and_launch_guest() {
     local guest_kernel_version=$(echo "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
     local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
     local guest_initrd_basename="initrd.img-${guest_kernel_version}"
+    local guest_initramfs_basename="initramfs-${guest_kernel_version}.img"
+    
     wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
     ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
+    # scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
     scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+    GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}/ini*" )
+    
+    # save_binary_paths "${GENERATED_INITRD_BIN}"
+
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
     # Update the initrd file path and name in the guest launch source-bins file
-    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${GENERATED_INITRD_BIN}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # A few seconds for shutdown to complete
     sleep 3
@@ -975,26 +1169,38 @@ rhel_subscription_mgr_set_login(){
   read -sp "Password: " RHEL_SUBS_MGR_PASS
 }
 
+
+
 set_cloud_init_url_based_on_linux_distribution(){
-  case ${ID,,} in
+  case ${LINUX_TYPE} in
   ubuntu)
     CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
     ;;
   rhel)
     # Can't Initialize CLOUD_INIT_IMAGE_URL for redhat due to redhat subscription requirement
-    echo "Download Red Hat Enterprise Linux 9.2 KVM Guest Image from RedHat Login" 
+    echo "Download Red Hat Enterprise Linux ${RHEL_VERSION} KVM Guest Image from RedHat Login" 
     ;;
   esac
 }
 
-check_if_dependencies_installed(){
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  source "${HOME}/.cargo/env" 2>/dev/null || true
+identify_linux_distribution_type(){ 
+  # Identify Linux Distribution type --Ubuntu/RedHat
+  [ -e /etc/os-release ] && . /etc/os-release
 
-  if [ -f "${dependencies_installed_file}" ]; then
-    echo -e "Dependencies previously installed"
-    dependencies_installed=1
-  fi
+  case ${ID,,} in
+    ubuntu | debian)
+    LINUX_TYPE='ubuntu'
+    ;;
+
+    rhel)
+    LINUX_TYPE='rhel'
+    RHEL_VERSION=${VERSION_ID}
+    ;;
+
+    fedora)
+    LINUX_TYPE='fedora'
+    ;;
+  esac
 }
 
 install_common_dependencies(){
@@ -1060,67 +1266,6 @@ rhel_install_dependencies() {
   echo "true" > "${dependencies_installed_file}"
 }
 
-ubuntu_install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  
-  check_if_dependencies_installed
-
-  # If dependencies already exist
-  if [ $dependencies_installed -eq 1 ]; then
-    return 0
-  fi
-
-  # Build dependencies
-  sudo apt install -y build-essential git
-
-  # ACL for setting access to /dev/sev
-  sudo apt install -y acl
-  
-  # qemu dependencies
-  sudo apt install -y ninja-build pkg-config
-  sudo apt install -y libglib2.0-dev
-  sudo apt install -y libpixman-1-dev
-  sudo apt install -y libslirp-dev
-  
-  # ovmf dependencies
-  sudo apt install -y python-is-python3 uuid-dev iasl
-  
-  #sudo apt install -y nasm
-  sudo apt purge nasm
-  install_nasm_from_source
-
-  # kernel dependencies
-  sudo apt install -y bc rsync
-  sudo apt install -y flex bison libncurses-dev libssl-dev libelf-dev dwarves zstd debhelper
-
-  # dracut dependencies
-  # dracut-core in native distro package manager too old with many issues. It is now
-  # downloaded via source tarball URL in the environment variable above.
-  # The asciidoc package is huge. It is commented because it is only needed for lsinitrd, and
-  # the dracut build commands avoid the lsinitrd build.
-  # The dracut initrd build is currently not working. Devices are failing to mount using the
-  # dracut built initrd. This dependency is removed for now due to this reason. For now,
-  # initrd is installed with the kernel debian package on the guest, and then scp-ed back to
-  # the host for direct-boot use.
-  sudo apt install -y pkg-config libkmod-dev
-  #sudo apt install -y asciidoc
-  #sudo apt install -y dracut-core
-
-  # cloud-utils dependency
-  # genisoimage for userdata and metadata seed
-  sudo apt install -y cloud-image-utils genisoimage
-
-  # Virtualization tools for resizing image
-  # virt-resize currently does not work with cloud-init images. It changes the partition 
-  # names and grub gets messed up. This dependency is removed for now due to this reason.
-  #sudo apt install -y libguestfs-tools
-  sudo apt install -y qemu-utils
-
-  # sev-snp-measure
-  sudo apt install -y python3-pip
-
-  echo "true" > "${dependencies_installed_file}"
-}
 
 
 
@@ -1128,9 +1273,9 @@ ubuntu_install_dependencies() {
 
 # Main
 
+
 main() {
-  # Identify Linux Distribution type --Ubuntu/RedHat
-  [ -e /etc/os-release ] && . /etc/os-release
+  identify_linux_distribution_type
   
   # A command must be specified
   if [ -z "${1}" ]; then
@@ -1194,11 +1339,8 @@ main() {
   done
   
   # Set SETUP_WORKING_DIR for non-upm
-    # COMMENT  
-    # I haven't tested 'sev-snp-devel'(no-upm) branch 
-    # as I was not sure if I can test this branch as I already installed snp kernel package from snp-latest branch
   if ! $UPM; then
-    SETUP_WORKING_DIR="${SETUP_WORKING_DIR}/sev-snp-devel"
+    SETUP_WORKING_DIR="${SETUP_WORKING_DIR}/non-upm"
   fi
 
   # Execute command
