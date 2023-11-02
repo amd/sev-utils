@@ -96,9 +96,6 @@ SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.3.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-UBUNTU_CLOUD_INIT_IMAGE_URL=" "
-REDHAT_CLOUD_INIT_IMAGE_URL=" "
-FEDORA_CLOUD_INIT_IMAGE_URL=" "
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 
 
@@ -471,8 +468,7 @@ EOF
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
 
-  set_cloud_init_url_based_on_linux_distribution
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  download_cloud_init_image
 }
 
 resize_guest() {
@@ -1169,18 +1165,18 @@ rhel_subscription_mgr_set_login(){
   read -sp "Password: " RHEL_SUBS_MGR_PASS
 }
 
-
-
-set_cloud_init_url_based_on_linux_distribution(){
+download_cloud_init_image(){
   case ${LINUX_TYPE} in
   ubuntu)
     CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
     ;;
   rhel)
-    # Can't Initialize CLOUD_INIT_IMAGE_URL for redhat due to redhat subscription requirement
-    echo "Download Red Hat Enterprise Linux ${RHEL_VERSION} KVM Guest Image from RedHat Login" 
+    # Set REDHAT_OFFLINE_TOKEN="<offline token from redHat Portal>" in ~/.bash_profile
+    # Download guest image from the RedHat API
+    . ${PWD}/download_redhat_guest_image.sh    
     ;;
   esac
+  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
 }
 
 identify_linux_distribution_type(){ 
