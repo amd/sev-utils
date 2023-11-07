@@ -197,6 +197,9 @@ install_dependencies() {
   # Build dependencies
   sudo apt install -y build-essential git
 
+  # ACL for setting access to /dev/sev
+  sudo apt install -y acl
+
   # qemu dependencies
   sudo apt install -y ninja-build pkg-config
   sudo apt install -y libglib2.0-dev
@@ -571,6 +574,9 @@ build_and_install_amdsev() {
   
   popd >/dev/null
 
+  # Give kvm group rw access to /dev/sev
+  sudo setfacl -m g:kvm:rw /dev/sev
+  
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
 
