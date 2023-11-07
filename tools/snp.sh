@@ -493,7 +493,7 @@ build_base_qemu_cmdline() {
   chmod +x "${QEMU_CMDLINE_FILE}"
 
   # Base cmdline
-  echo -n "sudo ${qemu_bin} " > "${QEMU_CMDLINE_FILE}"
+  echo -n "${qemu_bin} " > "${QEMU_CMDLINE_FILE}"
   add_qemu_cmdline_opts "--enable-kvm"
   add_qemu_cmdline_opts "-cpu EPYC-Milan-v2"
   add_qemu_cmdline_opts "-smp 2"
@@ -525,18 +525,18 @@ build_base_qemu_cmdline() {
 }
 
 stop_guests() {
-  local qemu_processes=$(sudo ps aux | grep "${WORKING_DIR}.*qemu.*${IMAGE}" | grep -v "tail.*qemu.log" | grep -v "grep.*qemu")
+  local qemu_processes=$(ps aux | grep "${WORKING_DIR}.*qemu.*${IMAGE}" | grep -v "tail.*qemu.log" | grep -v "grep.*qemu")
   [[ -n "${qemu_processes}" ]] || { echo -e "No qemu processes currently running"; return 0; }
 
   echo -e "Current running qemu process:"
   echo "${qemu_processes}"
 
   echo -e "\nKilling qemu process..."
-  sudo pkill -9 -f "${WORKING_DIR}.*qemu.*${IMAGE}" || true
+  pkill -9 -f "${LAUNCH_WORKING_DIR}.*qemu.*${IMAGE}" || true
   sleep 3
 
   echo -e "Verifying no qemu processes running..."
-  qemu_processes=$(sudo ps aux | grep "${WORKING_DIR}.*qemu.*${IMAGE}" | grep -v "tail.*qemu.log" | grep -v "grep.*qemu")
+  qemu_processes=$(ps aux | grep "${WORKING_DIR}.*qemu.*${IMAGE}" | grep -v "tail.*qemu.log" | grep -v "grep.*qemu")
 
   [[ -z "${qemu_processes}" ]] || { >&2 echo -e "FAIL: qemu processes still exist:\n${qemu_processes}"; return 1; }
   echo -e "No qemu processes running!"
@@ -570,6 +570,9 @@ build_and_install_amdsev() {
   sudo ./install.sh
   
   popd >/dev/null
+
+  # Add the user to kvm group so that qemu can be run without root permissions
+  sudo usermod -a -G kvm "${USER}"
 
   # dracut initrd build is not working currently
   # Devices are failing to mount using the dracut built initrd
