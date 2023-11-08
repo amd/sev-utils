@@ -198,6 +198,18 @@ install_rust() {
   source "${HOME}/.cargo/env" 2>/dev/null
 }
 
+install_sev_snp_measure() {
+  if which sev-snp-measure 2>/dev/null 1>&2; then
+    echo -e "sev-snp-measure previously installed"
+    return 0
+  fi
+
+  # Install sev-snp-measure
+  # pip issue on 20.04 - some openssl bug
+  #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
+  pip install sev-snp-measure
+}
+
 install_dependencies() {
   local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
   source "${HOME}/.cargo/env" 2>/dev/null || true
@@ -250,11 +262,8 @@ install_dependencies() {
   #sudo apt install -y libguestfs-tools
   sudo apt install -y qemu-utils
 
-  # sev-snp-measure
+  # pip needed for sev-snp-measure
   sudo apt install -y python3-pip
-  # pip issue on 20.04 - some openssl bug
-  #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
-  pip install sev-snp-measure
   
   echo "true" > "${dependencies_installed_file}"
 }
@@ -1060,6 +1069,7 @@ main() {
 
     attest-guest)
       install_rust
+      install_sev_snp_measure
       install_dependencies
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
