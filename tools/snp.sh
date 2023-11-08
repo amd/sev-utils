@@ -185,6 +185,19 @@ install_nasm_from_source() {
   popd >/dev/null
 }
 
+install_rust() {
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+
+  if which rustc 2>/dev/null 1>&2; then
+    echo -e "Rust previously installed"
+    return 0
+  fi
+
+  # Install rust
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+  source "${HOME}/.cargo/env" 2>/dev/null
+}
+
 install_dependencies() {
   local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
   source "${HOME}/.cargo/env" 2>/dev/null || true
@@ -242,11 +255,7 @@ install_dependencies() {
   # pip issue on 20.04 - some openssl bug
   #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
   pip install sev-snp-measure
-
-  # Rust is required to build snpguest
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
-  source "${HOME}/.cargo/env" 2>/dev/null
-
+  
   echo "true" > "${dependencies_installed_file}"
 }
 
@@ -475,6 +484,33 @@ KERNEL_BIN="${guest_kernel}"
 EOF
 }
 
+copy_launch_binaries() {
+  # Source the bins generated from setup
+  source "${SETUP_WORKING_DIR}/source-bins"
+
+  # Skip if task previously completed
+  if [ -f "${LAUNCH_WORKING_DIR}/source-bins" ]; then
+    echo -e "Guest launch binaries previously copied"
+    return 0
+  fi
+
+  # Create directory
+  mkdir -p "${LAUNCH_WORKING_DIR}"
+
+  # Copy the setup generated bins to the guest launch directory
+  # initrd is copied after the first guest boot and is scp-ed off
+  cp "${OVMF_BIN}" "${LAUNCH_WORKING_DIR}"
+  #cp "${INITRD_BIN}" "${LAUNCH_WORKING_DIR}"
+  cp "${KERNEL_BIN}" "${LAUNCH_WORKING_DIR}"
+
+# Save binary paths in source file
+cat > "${LAUNCH_WORKING_DIR}/source-bins" <<EOF
+OVMF_BIN="${LAUNCH_WORKING_DIR}/$(basename "${OVMF_BIN}")"
+INITRD_BIN="${LAUNCH_WORKING_DIR}/$(basename "${INITRD_BIN}")"
+KERNEL_BIN="${LAUNCH_WORKING_DIR}/$(basename "${KERNEL_BIN}")"
+EOF
+}
+
 add_qemu_cmdline_opts() {
   echo -e "\\" >> "${QEMU_CMDLINE_FILE}"
   echo -n "$* " >> "${QEMU_CMDLINE_FILE}"
@@ -535,7 +571,7 @@ stop_guests() {
   echo "${qemu_processes}"
 
   echo -e "\nKilling qemu process..."
-  pkill -9 -f "${LAUNCH_WORKING_DIR}.*qemu.*${IMAGE}" || true
+  pkill -9 -f "${WORKING_DIR}.*qemu.*${IMAGE}" || true
   sleep 3
 
   echo -e "Verifying no qemu processes running..."
@@ -597,9 +633,6 @@ setup_and_launch_guest() {
     return 1
   fi
 
-  # Create directory
-  mkdir -p "${LAUNCH_WORKING_DIR}"
-
   # Build base qemu cmdline and add direct boot bins
   build_base_qemu_cmdline "${QEMU_BIN}"
 
@@ -632,9 +665,12 @@ setup_and_launch_guest() {
     local guest_initrd_basename="initrd.img-${guest_kernel_version}"
     wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
     ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${SETUP_WORKING_DIR}"
+    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
+
+    # Update the initrd file path and name in the guest launch source-bins file
+    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # A few seconds for shutdown to complete
     sleep 3
@@ -1012,7 +1048,9 @@ main() {
         echo -e "Setup directory does not exist, please run 'setup-host' prior to 'launch-guest'"
         return 1
       fi
-      source "${SETUP_WORKING_DIR}/source-bins"
+
+      copy_launch_binaries
+      source "${LAUNCH_WORKING_DIR}/source-bins"
 
       verify_snp_host
       install_dependencies
@@ -1021,6 +1059,7 @@ main() {
       ;;
 
     attest-guest)
+      install_rust
       install_dependencies
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
