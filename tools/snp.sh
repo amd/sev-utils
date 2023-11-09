@@ -748,27 +748,27 @@ stop_guests() {
   echo -e "No qemu processes running!"
 }
 
-identify_guest_kernel_version(){
-  # Get latest guest snp kernel package file path
-  local GUEST_SNP_KERNEL_PCKG_PATH=$(ls -tr  ${SETUP_WORKING_DIR}/AMDSEV/linux/*snp*| grep -v header| grep -v host| grep -v dbg| head -1)
+# identify_guest_kernel_version(){
+#   # Get latest guest snp kernel package file path
+#   local GUEST_SNP_KERNEL_PCKG_PATH=$(ls -tr  ${SETUP_WORKING_DIR}/AMDSEV/linux/*snp*| grep -v header| grep -v host| grep -v dbg| head -1)
 
-  if [ ! -n "$GUEST_SNP_KERNEL_PCKG_PATH" ]; then 
-    echo "Host kernel package not found, "
-    return 0
-  fi
+#   if [ ! -n "$GUEST_SNP_KERNEL_PCKG_PATH" ]; then 
+#     echo "Host kernel package not found, "
+#     return 0
+#   fi
 
-  # Query for the vmlinuz-<guest snp kernel> file from guest package without pckg install
-  case ${LINUX_TYPE} in
-  ubuntu) 
-  GUEST_SNP_KERNEL_FILE=$(dpkg -c $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
-  ;;
+#   # Query for the vmlinuz-<guest snp kernel> file from guest package without pckg install
+#   case ${LINUX_TYPE} in
+#   ubuntu) 
+#   GUEST_SNP_KERNEL_FILE=$(dpkg -c $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
+#   ;;
 
-  rhel | fedora)
-    GUEST_SNP_KERNEL_FILE=$(rpm -qlp $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
-    ;;
-  esac
-  GUEST_SNP_KERNEL_VERSION=$(echo "${GUEST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
-}
+#   rhel | fedora)
+#     GUEST_SNP_KERNEL_FILE=$(rpm -qlp $GUEST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
+#     ;;
+#   esac
+#   GUEST_SNP_KERNEL_VERSION=$(echo "${GUEST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+# }
 
 identify_host_kernel_version(){
   # Get latest host snp kernel package file path
