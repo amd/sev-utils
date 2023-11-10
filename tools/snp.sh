@@ -548,7 +548,6 @@ build_base_qemu_cmdline() {
   add_qemu_cmdline_opts "-m 4000M"
   add_qemu_cmdline_opts "-no-reboot"
   add_qemu_cmdline_opts "-vga std"
-  add_qemu_cmdline_opts "-vnc :0"
   add_qemu_cmdline_opts "-monitor pty"
   add_qemu_cmdline_opts "-daemonize"
 
