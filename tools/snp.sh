@@ -1065,6 +1065,10 @@ main() {
       install_dependencies
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
+
+      echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
+      echo -e "The guest is running in the background. Use the following command to access via SSH:"
+      echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
       ;;
 
     attest-guest)
