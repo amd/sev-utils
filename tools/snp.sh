@@ -619,7 +619,7 @@ build_and_install_amdsev() {
   popd >/dev/null
 
   # Give kvm group rw access to /dev/sev
-  sudo setfacl -m g:kvm:rw /dev/sev
+  sudo setfacl -m g:kvm:rw,d:g:kvm:rw /dev/sev || true
   
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
