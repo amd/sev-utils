@@ -793,6 +793,16 @@ identify_host_kernel_version(){
   HOST_SNP_KERNEL_VERSION=$(echo "${HOST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
 }
 
+guest_kernel_version(){
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/" >/dev/null
+
+    local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
+    local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}')
+
+    guest_kernel_version="$kernel_version$kernel_type"
+  popd >/dev/null
+}
+
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -846,6 +856,23 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+guest_kernel_package(){
+
+  identify_linux_distribution_type
+
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
+    case ${LINUX_TYPE} in
+      ubuntu)
+      # guest_kernel_package == guest_kernel_deb
+        guest_kernel_package=$(realpath linux-image*snp-guest*.deb| grep -v dbg)
+        ;;
+    rhel)
+        guest_kernel_package=$(realpath kernel-*snp_guest*.rpm| grep -v header)
+        ;;
+    esac
+    # echo "initrd_basename = $initrd_basename"
+  popd>/dev/null
+}
 
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
@@ -880,19 +907,29 @@ setup_and_launch_guest() {
     "${QEMU_CMDLINE_FILE}"
 
     # Install the guest kernel, retrieve the initrd and then reboot
-    local guest_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-    local guest_kernel_version=$(echo "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
-    local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
-    local guest_initrd_basename="initrd.img-${guest_kernel_version}"
-    local guest_initramfs_basename="initramfs-${guest_kernel_version}.img"
+    guest_kernel_version
+    guest_kernel_package
     
-    wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
-    # scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+    # initrd/initramfs
+    local guest_initrd_basename="init*$(guest_kernel_version)"
+
+    # Copy pckg into guest and Install 
+    wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
+    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
+    
+    # Copy initrd/initramfs file from guest into host
+ 
+      # Change initrd/initramfs file permission to 644 for successful scp of initrd(ubuntu)/initramfs(redhat)
+    ssh_guest_command "sudo chmod 644  $(realpath "/boot/${guest_initrd_basename}"| grep -v kdump) "
+
+      # To avoid error: chmod: intramfs.img <No such file or directory> when doing ssh into ubuntu guest from RedHat Host 
+    guest_initrd_path=$(echo $(ssh_guest_command "realpath /boot/${guest_initrd_basename}*| grep -v kdump|head -1"))
+
+    scp_guest_command "${GUEST_USER}@localhost:${guest_initrd_path}" "${LAUNCH_WORKING_DIR}"
+    
+    # Overwrite the initrd/initramfs file path in host
     GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}/ini*" )
-    
-    # save_binary_paths "${GENERATED_INITRD_BIN}"
+    save_binary_paths "${GENERATED_INITRD_BIN}"
 
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
