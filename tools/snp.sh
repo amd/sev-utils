@@ -431,20 +431,24 @@ generate_guest_ssh_keypair() {
 }
 
 download_cloud_init_image(){
-  
+  local url_flag=1;
   case ${LINUX_TYPE} in
-  ubuntu)
-    CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-    ;;
-  rhel)
-    # Set REDHAT_OFFLINE_TOKEN="<offline token from redHat Portal>" in ~/.bash_profile
-    # Download guest image from the RedHat API
-    . ${PWD}/download_redhat_guest_image.sh    
-    ;;
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+      ;;
+    rhel)
+      # Set REDHAT_OFFLINE_TOKEN="<offline token from redHat Portal>" in ~/.bash_profile
+      # Download guest image from the RedHat API
+      /bin/bash "$PWD/download_redhat_guest_image.sh"
+      # /bin/bash "/home/amd/forked/sev-utils/tools/pwd_scrpt.sh"
+      url_flag=0;
+      ;;
   esac
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
-
+  if [ $url_flag -eq 1 ];then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}" 
+  fi
 }
+
 cloud_init_create_data() {
   if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data" && \
     -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data"  && \
@@ -483,7 +487,7 @@ EOF
     genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data"
   
   # Download KVM Guest Image from RedHat Customer Portal
-  # scp from local vm to RedHat server
+  # scp from local vm to RedHat server 
   download_cloud_init_image
 }
 
@@ -619,10 +623,20 @@ build_guest_initrd() {
     --add-drivers "sev-guest"
 }
 
+get_guest_kernel_version(){
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/" >/dev/null
+
+    local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
+    local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}'|tr -d '"')
+
+    echo "$kernel_version$kernel_type"
+  popd >/dev/null
+}
+
 save_binary_paths() {
   # Referring to bzImage copied file
   local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz*"))
-  identify_guest_kernel_version
+  local guest_kernel_version=$(get_guest_kernel_version)
   GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${GUEST_SNP_KERNEL_VERSION}"
 
  
@@ -793,16 +807,6 @@ identify_host_kernel_version(){
   HOST_SNP_KERNEL_VERSION=$(echo "${HOST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
 }
 
-guest_kernel_version(){
-  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/" >/dev/null
-
-    local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
-    local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}')
-
-    guest_kernel_version="$kernel_version$kernel_type"
-  popd >/dev/null
-}
-
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -856,22 +860,30 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
-guest_kernel_package(){
 
-  identify_linux_distribution_type
-
+get_guest_kernel_package(){
+  # guest_kernel_package == guest_kernel_deb
   pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
     case ${LINUX_TYPE} in
       ubuntu)
-      # guest_kernel_package == guest_kernel_deb
-        guest_kernel_package=$(realpath linux-image*snp-guest*.deb| grep -v dbg)
+          echo $(realpath linux-image*snp-guest*.deb| grep -v dbg)
         ;;
-    rhel)
-        guest_kernel_package=$(realpath kernel-*snp_guest*.rpm| grep -v header)
-        ;;
+      rhel)
+          echo $(realpath $(ls -t kernel-*snp_guest*.rpm| grep -v header| head -1))
+          ;;
     esac
-    # echo "initrd_basename = $initrd_basename"
   popd>/dev/null
+}
+
+get_package_install_command(){
+    case ${LINUX_TYPE} in
+    ubuntu)
+      echo "dpkg -i"
+      ;;
+    rhel)
+      echo "dnf install -y"
+      ;;
+  esac
 }
 
 setup_and_launch_guest() {
@@ -880,6 +892,10 @@ setup_and_launch_guest() {
     >&2 echo -e "Image file specified, but doesn't exist"
     return 1
   fi
+
+  # Create directory
+  mkdir -p "${LAUNCH_WORKING_DIR}"
+  mkdir -p "${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
 
   # Build base qemu cmdline and add direct boot bins
   build_base_qemu_cmdline "${QEMU_BIN}"
@@ -906,29 +922,67 @@ setup_and_launch_guest() {
     # Launch qemu cmdline
     "${QEMU_CMDLINE_FILE}"
 
+
     # Install the guest kernel, retrieve the initrd and then reboot
-    guest_kernel_version
-    guest_kernel_package
+    local guest_kernel_version=$(get_guest_kernel_version)
+    guest_kernel_version="6.5.0-rc2-snp-guest-ad9c0bf475ec"
+    echo
+    echo "guest_kernel_version = $guest_kernel_version"
     
     # initrd/initramfs
-    local guest_initrd_basename="init*$(guest_kernel_version)"
-
+    local guest_initrd_basename="init*${guest_kernel_version}*"
+    echo
+    echo "guest_initrd_basename = $guest_initrd_basename"
     # Copy pckg into guest and Install 
+    
+    local package_install_command=$(get_package_install_command)
+    local guest_kernel_package=$(get_guest_kernel_package)
+
+    echo
+    echo "guest_kernel_package = $guest_kernel_package"
+  
     wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
-    
+    ssh_guest_command "sudo $package_install_command /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
+
+    echo
+    echo "Actual = /boot/init*6.5.0-rc2-snp-guest-ad9c0bf475ec*"
+
+    echo 
+    echo "Command = /boot/${guest_initrd_basename}"
+
+    ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump"
+    # ssh_guest_command "echo ${PWD}"
+    # Suggestion(TODO later):
     # Copy initrd/initramfs file from guest into host
- 
-      # Change initrd/initramfs file permission to 644 for successful scp of initrd(ubuntu)/initramfs(redhat)
-    ssh_guest_command "sudo chmod 644  $(realpath "/boot/${guest_initrd_basename}"| grep -v kdump) "
+      # 1. login as root user 
+      # 2. copy initrd/initramfs file from /boot/ to ~/ in the guest os
+      # 3. # Change initrd/initramfs file permission to 644 for successful scp of initrd(ubuntu)/initramfs(redhat)
+    #   # Change initrd/initramfs file permission to 644 for successful scp of initrd(ubuntu)/initramfs(redhat)
+    echo
+    echo "guest_kernel_version=$guest_kernel_version"
 
-      # To avoid error: chmod: intramfs.img <No such file or directory> when doing ssh into ubuntu guest from RedHat Host 
-    guest_initrd_path=$(echo $(ssh_guest_command "realpath /boot/${guest_initrd_basename}*| grep -v kdump|head -1"))
+    echo
+    echo "guest_initrd_basename=$guest_initrd_basename"
 
-    scp_guest_command "${GUEST_USER}@localhost:${guest_initrd_path}" "${LAUNCH_WORKING_DIR}"
+    echo 
+    local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
+    initrd_filepath=$(echo $initrd_filepath| tr -d '\r')
+    echo "initrd_filepath = $initrd_filepath"
+
+    # ssh_guest_command "$(ls -l $(realpath "/boot/${guest_initrd_basename}")| grep -v kdump)"
+    ssh_guest_command "sudo chmod 644  $(realpath ${initrd_filepath})"
+    echo
+    echo "realpath"
+    ssh_guest_command "sudo chmod 644 $(realpath $initrd_filepath)"
+    ssh_guest_command "ls -l $(realpath $initrd_filepath)"
+    # ssh_guest_command "ls -l "/boot/${guest_initrd_basename}" | grep -v kdump"
+    #   # To avoid error: chmod: intramfs.img <No such file or directory> when doing ssh into ubuntu guest from RedHat Host 
+    # guest_initrd_path=$(echo $(ssh_guest_command "realpath /boot/${guest_initrd_basename}*| grep -v kdump|head -1"))
+
+    scp_guest_command "${GUEST_USER}@localhost:${initrd_filepath}" "${LAUNCH_WORKING_DIR}"
     
-    # Overwrite the initrd/initramfs file path in host
-    GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}/ini*" )
+    # # Overwrite the initrd/initramfs file path in host
+    GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}"/ini* )
     save_binary_paths "${GENERATED_INITRD_BIN}"
 
     ssh_guest_command "sudo shutdown now" || true
@@ -1218,19 +1272,7 @@ rhel_subscription_mgr_set_login(){
   read -sp "Password: " RHEL_SUBS_MGR_PASS
 }
 
-download_cloud_init_image(){
-  case ${LINUX_TYPE} in
-  ubuntu)
-    CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
-    ;;
-  rhel)
-    # Set REDHAT_OFFLINE_TOKEN="<offline token from redHat Portal>" in ~/.bash_profile
-    # Download guest image from the RedHat API
-    . ${PWD}/download_redhat_guest_image.sh    
-    ;;
-  esac
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
-}
+
 
 identify_linux_distribution_type(){ 
   # Identify Linux Distribution type --Ubuntu/RedHat
@@ -1422,8 +1464,8 @@ main() {
       copy_launch_binaries
       source "${LAUNCH_WORKING_DIR}/source-bins"
 
-      verify_snp_host
-      install_dependencies
+      # verify_snp_host
+      # install_dependencies
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
 
