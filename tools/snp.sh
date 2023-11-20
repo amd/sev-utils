@@ -81,7 +81,7 @@ GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
 GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}/${GUEST_NAME}-key}"
-GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-root}"
+GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}/${GUEST_NAME}.qcow2}"
@@ -1287,12 +1287,14 @@ identify_linux_distribution_type(){
     rhel)
     LINUX_TYPE='rhel'
     RHEL_VERSION=${VERSION_ID}
+    GUEST_ROOT_LABEL="root"
     ;;
 
     fedora)
     LINUX_TYPE='fedora'
     ;;
   esac
+  GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 }
 
 install_common_dependencies(){
