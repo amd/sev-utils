@@ -92,7 +92,7 @@ AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
 AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
 AMDSEV_NON_UPM_BRANCH="snp-non-upm"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
-SNPGUEST_BRANCH="tags/v0.2.2"
+SNPGUEST_BRANCH="tags/v0.3.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
@@ -920,21 +920,18 @@ attest_guest() {
   ssh_guest_command "sudo insmod /lib/modules/*/kernel/drivers/virt/coco/sev-guest/sev-guest.ko >/dev/null 2>&1 || true"
 
   # Request and display the snp attestation report with random data
-  ssh_guest_command "sudo ./snpguest report --random"
-  ssh_guest_command "./snpguest display report"
+  ssh_guest_command "sudo ./snpguest report attestation-report.bin request-data.txt --random"
+  ssh_guest_command "./snpguest display report attestation-report.bin"
 
   # Retrieve ark, ask, vcek (saved in ./certs)
-  ssh_guest_command "./snpguest fetch ca ${cpu_code_name} ."
-  ssh_guest_command "./snpguest fetch vcek ${cpu_code_name} ."
+  ssh_guest_command "./snpguest fetch ca pem ${cpu_code_name} ."
+  ssh_guest_command "./snpguest fetch vcek pem ${cpu_code_name} . attestation-report.bin"
 
   # Verifies that ARK, ASK and VCEK are all properly signed
   ssh_guest_command "./snpguest verify certs ."
 
   # Verifies the attestation-report trusted compute base matches vcek
-  ssh_guest_command "./snpguest verify tcb ."
-
-  # Verifies the attestation report was signed by the vcek
-  ssh_guest_command "./snpguest verify signature ."
+  ssh_guest_command "./snpguest verify attestation . attestation-report.bin"
 
   # Use sev-snp-measure utility to calculate the expected measurement
   local expected_measurement=$(generate_snp_expected_measurement)
@@ -942,7 +939,7 @@ attest_guest() {
 
   # Parse the measurement out of the snp report
   local snpguest_report_measurement=$(ssh_guest_command \
-    "./snpguest display report \
+    "./snpguest display report attestation-report.bin \
     | tr '\n' ' ' \
     | sed \"s|.*Measurement:\(.*\)Host Data.*|\1\n|g\" \
     | sed \"s| ||g\"")
