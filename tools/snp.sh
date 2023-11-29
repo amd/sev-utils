@@ -306,7 +306,10 @@ rhel_install_dependencies() {
 
   # Build dependencies
   sudo dnf install -y git
-  sudo dnf install -y make automake gcc gcc-c++ kernel-devel 
+  sudo dnf install -y make automake gcc gcc-c++ kernel-devel
+
+  # make dependencies
+  sudo dnf install -y libuuid-devel dwarves perl 
 
   # Enable RedHat Repository for qemu dependencies
   sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
@@ -343,6 +346,13 @@ rhel_install_dependencies() {
 
   # Handles grub menu config 
   sudo dnf info -y grubby
+
+  # genisoimage for cloud-init data(VM user-data and metadata) seed
+  # genisoimage utility supported until RedHat version 8
+
+  # For genisoimage utility support in RedHat 9, using epel 
+  sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+  sudo dnf install -y genisoimage
 }
 
 install_dependencies(){
