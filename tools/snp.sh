@@ -87,6 +87,11 @@ QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}/${GUEST_NAME}.qcow2}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
+# Redhat Sensitive Credentials -- User must specify, no default value set
+RHEL_SUBS_MGR_USER="${RHEL_SUBS_MGR_USER}"
+RHEL_SUBS_MGR_PASS="${RHEL_SUBS_MGR_PASS}"
+REDHAT_OFFLINE_TOKEN="${REDHAT_OFFLINE_TOKEN}"
+
 
 # URLs and repos
 AMDSEV_URL="https://github.com/LakshmiSaiHarika/AMDSEV.git"
@@ -285,11 +290,8 @@ rhel_subscription_mgr_register(){
 		case "${subscription_manager_status}" in
 			*"$each_word"*)
 				
-				# Prompt for values only if env var not set
-				if [ -z $RHEL_SUBS_MGR_USER ] &&  [ -z $RHEL_SUBS_MGR_PASS ]; then
-					rhel_subscription_mgr_set_login
-				fi
-				
+        check_if_redhat_credentials_set
+
 				# Activate RedHat Subscription
 				sudo subscription-manager register --username ${RHEL_SUBS_MGR_USER} --password ${RHEL_SUBS_MGR_PASS} --force
 				break
@@ -440,6 +442,16 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+check_if_redhat_token_set(){
+  if [ -z $REDHAT_OFFLINE_TOKEN ]; then
+      echo
+      echo "set environment variable REDHAT_OFFLINE_TOKEN to RedHat Generated Token API"
+      return 1
+  fi
+
+}
+
+
 download_cloud_init_image(){
   local url_flag=1;
   case ${LINUX_TYPE} in
@@ -447,14 +459,15 @@ download_cloud_init_image(){
       CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
       ;;
     rhel)
-      # Set REDHAT_OFFLINE_TOKEN="<offline token from redHat Portal>" in ~/.bash_profile
+      check_if_redhat_token_set
+
       # Download guest image from the RedHat API
       /bin/bash "$PWD/download_redhat_guest_image.sh"
-      # /bin/bash "/home/amd/forked/sev-utils/tools/pwd_scrpt.sh"
-      url_flag=0;
+      url_flag=0
       ;;
   esac
   if [ $url_flag -eq 1 ];then
+    # Download qcow2 image from static URL
     wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}" 
   fi
 }
@@ -647,7 +660,7 @@ save_binary_paths() {
   # Referring to bzImage copied file
   local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz*"))
   local guest_kernel_version=$(get_guest_kernel_version)
-  GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${GUEST_SNP_KERNEL_VERSION}"
+  GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${guest_kernel_version}"
 
  
 # Save binary paths in source file
@@ -673,6 +686,9 @@ EOF
 
       # Using sed to replace the line starting with the specified word
       sed -i "/^${line_starts_with}.*/c\\${replace_with}" "${file_to_replace}"
+      
+      # Update the INITRD variable in current script after replacement
+      source "${SETUP_WORKING_DIR}/source-bins"
   fi
 }
 
@@ -1219,13 +1235,19 @@ attest_guest() {
     || { >&2 echo -e "FAIL: measurements do not match"; return 1; }
 }
 
-# Additional Functions Added here
-rhel_subscription_mgr_set_login(){
-  echo "Enter RedHat subscription Manager credentials"
-  read -p "Username: " RHEL_SUBS_MGR_USER
-  read -sp "Password: " RHEL_SUBS_MGR_PASS
-}
+check_if_redhat_credentials_set(){
+  local flag=0
+  if [ -z $RHEL_SUBS_MGR_USER ]; then
+      echo "set environment variable RHEL_SUBS_MGR_USER to RedHat Portal Username"
+      flag=1
+  fi
 
+  if [ -z $RHEL_SUBS_MGR_PASS ]; then
+      echo "set environment variable RHEL_SUBS_MGR_PASS to RedHat Portal Password"
+      flag=1
+  fi
+  return $flag
+}
 
 
 identify_linux_distribution_type(){ 
@@ -1241,6 +1263,7 @@ identify_linux_distribution_type(){
     LINUX_TYPE='rhel'
     RHEL_VERSION=${VERSION_ID}
     GUEST_ROOT_LABEL="root"
+    check_if_redhat_credentials_set
     ;;
 
     fedora)
@@ -1322,8 +1345,7 @@ rhel_install_dependencies() {
 
 
 main() {
-  identify_linux_distribution_type
-  
+ 
   # A command must be specified
   if [ -z "${1}" ]; then
     usage
@@ -1398,6 +1420,7 @@ main() {
       ;;
 
     setup-host)
+      identify_linux_distribution_type
       install_dependencies
 
       if $UPM; then
@@ -1412,6 +1435,7 @@ main() {
       ;;
 
     launch-guest)
+      identify_linux_distribution_type
       if [ ! -d "${SETUP_WORKING_DIR}" ]; then
         echo -e "Setup directory does not exist, please run 'setup-host' prior to 'launch-guest'"
         return 1
