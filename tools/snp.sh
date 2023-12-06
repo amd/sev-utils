@@ -96,7 +96,7 @@ REDHAT_OFFLINE_TOKEN="${REDHAT_OFFLINE_TOKEN}"
 # URLs and repos
 AMDSEV_URL="https://github.com/LakshmiSaiHarika/AMDSEV.git"
 AMDSEV_DEFAULT_BRANCH="rhel-fix"
-AMDSEV_NON_UPM_BRANCH="sev-snp-devel"
+AMDSEV_NON_UPM_BRANCH="snp-non-upm"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.3.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
@@ -246,9 +246,9 @@ ubuntu_install_dependencies() {
   # dracut built initrd. This dependency is removed for now due to this reason. For now,
   # initrd is installed with the kernel debian package on the guest, and then scp-ed back to
   # the host for direct-boot use.
-  sudo apt install -y pkg-config libkmod-dev
-  #sudo apt install -y asciidoc
-  #sudo apt install -y dracut-core
+  #sudo apt install -y pkg-config libkmod-dev
+  ##sudo apt install -y asciidoc
+  ##sudo apt install -y dracut-core
 
   # cloud-utils dependency
   # genisoimage for userdata and metadata seed
@@ -260,7 +260,7 @@ ubuntu_install_dependencies() {
   #sudo apt install -y libguestfs-tools
   sudo apt install -y qemu-utils
 
-  # sev-snp-measure
+  # pip needed for sev-snp-measure
   sudo apt install -y python3-pip
 }
 
@@ -337,9 +337,10 @@ rhel_install_dependencies() {
   # genisoimage for cloud-init data(VM user-data and metadata) seed
     # genisoimage utility supported until RedHat version 8
     # For genisoimage utility support in RedHat 9, using epel
-   
   sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
   sudo dnf install -y genisoimage
+
+  sudo dnf install -y curl
 }
 
 install_dependencies(){
@@ -358,9 +359,6 @@ install_dependencies(){
       ;;
     rhel)
       rhel_install_dependencies
-
-      # Unregister after installing all rpm packages
-      sudo subscription-manager unregister
       ;;
   esac
   
@@ -493,8 +491,7 @@ EOF
   # to create an ISO image that includes user-data and meta-data
     genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data"
   
-  # Download KVM Guest Image from RedHat Customer Portal
-  # scp from local vm to RedHat server 
+  # Download KVM Guest Image either from Static URL or RedHat Portal via APIs
   download_cloud_init_image
 }
 
@@ -849,8 +846,7 @@ setup_and_launch_guest() {
     return 1
   fi
 
-  # Create directory
-  # mkdir -p "${LAUNCH_WORKING_DIR}"
+  # Create separate Guest directory
   mkdir -p "${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
 
   # Build base qemu cmdline and add direct boot bins
@@ -1214,13 +1210,25 @@ identify_linux_distribution_type(){
     LINUX_TYPE='rhel'
     RHEL_VERSION=${VERSION_ID}
     GUEST_ROOT_LABEL="root"
+
+    if [[ "$UPM" = false ]]; then
+      echo "Non-UPM for Redhat is not supported "
+      return 1
+    fi
+
     check_if_redhat_credentials_set
     ;;
 
     fedora)
     LINUX_TYPE='fedora'
+
+    if [[ "$UPM" = false ]]; then
+      echo "Non-UPM for Fedora is not supported "
+      return 1
+    fi
     ;;
   esac
+
   GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 }
 
