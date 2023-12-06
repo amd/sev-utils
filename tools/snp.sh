@@ -213,18 +213,7 @@ install_sev_snp_measure() {
   pip install sev-snp-measure
 }
 
-
-
 ubuntu_install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  
-  check_if_dependencies_installed
-
-  # If dependencies already exist
-  if [ $dependencies_installed -eq 1 ]; then
-    return 0
-  fi
-
   # Build dependencies
   sudo apt install -y build-essential git
 
@@ -275,7 +264,6 @@ ubuntu_install_dependencies() {
   sudo apt install -y python3-pip
 }
 
-
 rhel_subscription_mgr_register(){
 	local subscription_manager_status=$(sudo subscription-manager status| grep "Overall Status" )
 
@@ -300,9 +288,7 @@ rhel_subscription_mgr_register(){
 	done
 }
 
-rhel_install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-    
+rhel_install_dependencies() {    
   # Step 1: Activate RedHat Subscription
   rhel_subscription_mgr_register
 
@@ -343,16 +329,15 @@ rhel_install_dependencies() {
   # sev-snp-measure
   sudo dnf install -y python3-pip
   
-  # Dependencies for install_common_dependencies
   sudo dnf install -y curl
 
   # Handles grub menu config 
   sudo dnf info -y grubby
 
   # genisoimage for cloud-init data(VM user-data and metadata) seed
-  # genisoimage utility supported until RedHat version 8
-
-  # For genisoimage utility support in RedHat 9, using epel 
+    # genisoimage utility supported until RedHat version 8
+    # For genisoimage utility support in RedHat 9, using epel
+   
   sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
   sudo dnf install -y genisoimage
 }
@@ -373,6 +358,7 @@ install_dependencies(){
       ;;
     rhel)
       rhel_install_dependencies
+
       # Unregister after installing all rpm packages
       sudo subscription-manager unregister
       ;;
@@ -383,8 +369,7 @@ install_dependencies(){
 
 ubuntu_set_grub_default_snp(){
   # Get the path to host kernel and the version for setting grub default
-  identify_host_kernel_version
-  local host_kernel_version=${HOST_SNP_KERNEL_VERSION}
+  local host_kernel_version=$(get_host_kernel_version)
 
   if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
     echo -e "Default grub already has SNP [${host_kernel_version}] set"
@@ -407,10 +392,10 @@ ubuntu_set_grub_default_snp(){
   sudo update-grub
 }
 
-grubby_to_set_geub_default_snp(){  
+grubby_to_set_grub_default_snp(){  
   # Get the path to host kernel package and the version for setting grub default
-  identify_host_kernel_version
-  local host_snp_kernel_version="vmlinuz-${HOST_SNP_KERNEL_VERSION}"    
+  local host_kernel_version=$(get_host_kernel_version)
+  local host_snp_kernel_version="vmlinuz-${host_kernel_version}"    
 
   # check if the default kernel is set to latest snp kernel version
   local default_grub_kernel=$(sudo grubby --default-kernel)
@@ -426,7 +411,7 @@ set_grub_default_snp() {
       ;;
 
     rhel | fedora) 
-      grubby_to_set_geub_default_snp
+      grubby_to_set_grub_default_snp
       ;;
   esac
 }
@@ -450,7 +435,6 @@ check_if_redhat_token_set(){
   fi
 
 }
-
 
 download_cloud_init_image(){
   local url_flag=1;
@@ -663,34 +647,13 @@ save_binary_paths() {
   local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-${guest_kernel_version}"))
   GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${guest_kernel_version}"
 
- 
 # Save binary paths in source file
-if [ ! -f "${SETUP_WORKING_DIR}/source-bins" ]; then
-  cat > "${SETUP_WORKING_DIR}/source-bins" <<EOF
-  QEMU_BIN="${SETUP_WORKING_DIR}/AMDSEV/qemu/build/qemu-system-x86_64"
-  OVMF_BIN="${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/AmdSev/DEBUG_GCC5/FV/OVMF.fd"
-  INITRD_BIN="${GENERATED_INITRD_BIN}"
-  KERNEL_BIN="${guest_kernel}"
+cat > "${SETUP_WORKING_DIR}/source-bins" <<EOF
+QEMU_BIN="${SETUP_WORKING_DIR}/AMDSEV/qemu/build/qemu-system-x86_64"
+OVMF_BIN="${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/AmdSev/DEBUG_GCC5/FV/OVMF.fd"
+INITRD_BIN="${GENERATED_INITRD_BIN}"
+KERNEL_BIN="${guest_kernel}"
 EOF
-fi
-  # Not sure: To check if save_binary_path is called from setup_and_launch_guest()
-
-  # if [[ ${FUNCNAME[1]} -eq "setup_and_launch_guest" ]]; then
-  #     echo "GENERATED_INITRD=${1}" >> "${SETUP_WORKING_DIR}/source-bins"
-  # fi
-
-  # Update GENERATED_INITRD_PATH with $1 (correct file path after guest kernel installation)
-  if [ ! -z "$1" ]; then
-      local line_starts_with="INITRD_BIN=" 
-      local replace_with="INITRD_BIN=$1"   
-      local file_to_replace="${SETUP_WORKING_DIR}/source-bins"
-
-      # Using sed to replace the line starting with the specified word
-      sed -i "/^${line_starts_with}.*/c\\${replace_with}" "${file_to_replace}"
-
-      # Update the INITRD variable in current script after replacement
-      source "${SETUP_WORKING_DIR}/source-bins"
-  fi
 }
 
 copy_launch_binaries() {
@@ -789,27 +752,15 @@ stop_guests() {
   echo -e "No qemu processes running!"
 }
 
-identify_host_kernel_version(){
+get_host_kernel_version(){
   # Get latest host snp kernel package file path
-  local HOST_SNP_KERNEL_PCKG_PATH=$(ls -tr  ${SETUP_WORKING_DIR}/AMDSEV/linux/*snp*| grep -v header| grep -v guest| grep -v dbg| head -1)
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/host/" >/dev/null
 
-  if [ ! -n "$HOST_SNP_KERNEL_PCKG_PATH" ]; then 
-    echo "Host kernel package not found, "
-    return 0
-  fi
+  local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
+  local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}'|tr -d '"')
 
-  # Query for the vmlinuz-<host snp kernel> file from guest package without pckg install
-  case ${LINUX_TYPE} in
-  ubuntu) 
-    HOST_SNP_KERNEL_FILE=$(dpkg -c $HOST_KERNEL_PCKG_PATH| grep vmlinuz*)
-    ;;
-
-  rhel | fedora)
-    HOST_SNP_KERNEL_FILE=$(rpm -qlp $HOST_SNP_KERNEL_PCKG_PATH| grep vmlinuz*)
-    ;;
-  esac
-
-  HOST_SNP_KERNEL_VERSION=$(echo "${HOST_SNP_KERNEL_FILE}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+  echo "$kernel_version$kernel_type"
+  popd >/dev/null
 }
 
 build_and_install_amdsev() {
@@ -838,7 +789,7 @@ build_and_install_amdsev() {
   # Get guest kernel version from the package
   local guest_kernel_version=$(get_guest_kernel_version)
 
-  # bzImage file location is same for ubuntu and RedHat
+  # Standardize vmlinuz location across different linux distributions
   local bzImage_file=$(find ${SETUP_WORKING_DIR}/AMDSEV/linux/guest -name "bzImage"| head -1)
   cp -v $bzImage_file ${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-$guest_kernel_version
   
@@ -850,7 +801,7 @@ build_and_install_amdsev() {
   popd >/dev/null
 
   # Give kvm group rw access to /dev/sev
-  sudo setfacl -m g:kvm:rw,d:g:kvm:rw /dev/sev || true
+  sudo setfacl -m g:kvm:rw /dev/sev
   
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
@@ -899,7 +850,7 @@ setup_and_launch_guest() {
   fi
 
   # Create directory
-  mkdir -p "${LAUNCH_WORKING_DIR}"
+  # mkdir -p "${LAUNCH_WORKING_DIR}"
   mkdir -p "${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
 
   # Build base qemu cmdline and add direct boot bins
@@ -933,29 +884,26 @@ setup_and_launch_guest() {
     # initrd/initramfs
     local guest_initrd_basename="init*${guest_kernel_version}*"
 
-    # Copy pckg into guest and Install 
     local package_install_command=$(get_package_install_command)
+
+    # Locate guest kernel package in the host
     local guest_kernel_package=$(get_guest_kernel_package)
   
+    # Copy pckg into guest and Install 
     wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
     ssh_guest_command "sudo $package_install_command /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
 
-    ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump"
-
     local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
     initrd_filepath=$(echo $initrd_filepath| tr -d '\r')
-    echo "initrd_filepath = $initrd_filepath"
 
     # Copy initrd/initramfs into home folder; change its permission to 644 for performing scp from guest into host
     ssh_guest_command "sudo cp  $(realpath ${initrd_filepath}) /home/${GUEST_USER}"
     ssh_guest_command "sudo chmod 644  /home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))"
     scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
     
-    # # Overwrite the initrd/initramfs file path in host
+    # Overwrite the initrd/initramfs file path in host
     GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}"/ini*"${guest_kernel_version}" )
     echo "GENERATED_INITRD_BIN = ${GENERATED_INITRD_BIN}"
-
-    save_binary_paths "${GENERATED_INITRD_BIN}"
 
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
@@ -1251,7 +1199,6 @@ check_if_redhat_credentials_set(){
   return $flag
 }
 
-
 identify_linux_distribution_type(){ 
   # Identify Linux Distribution type --Ubuntu/RedHat
   [ -e /etc/os-release ] && . /etc/os-release
@@ -1275,71 +1222,12 @@ identify_linux_distribution_type(){
   GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 }
 
-install_common_dependencies(){
-  # pip issue on 20.04 - some openssl bug
-  #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
-  pip install sev-snp-measure
-
-  # Rust is required to build snpguest
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
-
-  source "${HOME}/.cargo/env" 2>/dev/null
-}
-
-rhel_install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  
-  check_if_dependencies_installed
-  # If dependencies already exist
-  if [[ $dependencies_installed -eq 1 ]]; then
-    return 0
+unregister_redhat_subscription(){
+  if [ ${LINUX_TYPE} -eq "rhel" ]; then
+      echo "unregister_redhat_subscription"
+      sudo subscription-manager unregister
   fi
-  
-  # Step 1: Activate RedHat Subscription
-  rhel_subscription_mgr_set_login
-  sudo subscription-manager register --username ${RHEL_SUBS_MGR_USER} --password ${RHEL_SUBS_MGR_PASS} --force
-
-  # Build dependencies
-  sudo dnf install -y git
-  sudo dnf install -y make automake gcc gcc-c++ kernel-devel 
-
-  # Enable RedHat Repository for qemu dependencies
-  sudo subscription-manager register --username ${RHEL_SUBS_MGR_USER} --password ${RHEL_SUBS_MGR_PASS} --force
-  sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
-
-  # qemu dependencies
-  sudo dnf install -y ninja-build
-  sudo dnf install -y pkg-config
-  sudo dnf install  -y glib2-devel
-  sudo dnf install  -y pixman-devel
-  sudo dnf install -y libslirp-devel
-   
-  # ovmf dependencies
-  sudo dnf install -y uuid-devel
-  sudo dnf install -y iasl
-  sudo dnf remove nasm
-  install_nasm_from_source
-
-  # kernel dependencies
-  sudo dnf install -y rsync
-  sudo dnf install -y ncurses-devel
-  
-  # libssl-dev is openssl-devel in RHEL
-  # rpm-build -- Scripts and executable programs used to build packages
-  sudo dnf install -y rpm-build
-
-  # cloud-utils dependency
-  sudo dnf install -y cloud-init
-  
-  # sev-snp-measure
-  sudo dnf install -y python3-pip
-
-  install_common_dependencies
-  echo "true" > "${dependencies_installed_file}"
 }
-
-
-
 
 ###############################################################################
 
@@ -1449,19 +1337,19 @@ main() {
       install_dependencies
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
-<<<<<<< HEAD
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
       echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
-=======
->>>>>>> ad283d9 (Some function Fixes on ubuntu server)
       ;;
 
     attest-guest)
       install_rust
       install_sev_snp_measure
       install_dependencies
+      
+      # Unregister RedHat subscription from the host
+      unregister_redhat_subscription
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
       attest_guest
