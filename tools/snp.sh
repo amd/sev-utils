@@ -902,8 +902,7 @@ setup_and_launch_guest() {
     scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
     
     # Overwrite the initrd/initramfs file path in host
-    GENERATED_INITRD_BIN=$(ls "${LAUNCH_WORKING_DIR}"/ini*"${guest_kernel_version}" )
-    echo "GENERATED_INITRD_BIN = ${GENERATED_INITRD_BIN}"
+    GENERATED_INITRD_BIN=$(ls ${LAUNCH_WORKING_DIR}/ini*${guest_kernel_version}* )
 
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
@@ -923,6 +922,9 @@ setup_and_launch_guest() {
   # To be used as the guest initrd
   # NO LONGER NEEDED: initrd built after kernel generation (build_guest_initrd)
   #initrd_add_sev_guest_module "${INITRD_BIN}"
+
+  # To update INITRD_BIN to initramfs or intrd
+  source "${LAUNCH_WORKING_DIR}/source-bins"
 
   if $UPM; then
     add_qemu_cmdline_opts "-machine confidential-guest-support=sev0,memory-backend=ram1,kvm-type=protected"
@@ -1223,9 +1225,26 @@ identify_linux_distribution_type(){
 }
 
 unregister_redhat_subscription(){
-  if [ ${LINUX_TYPE} -eq "rhel" ]; then
-      echo "unregister_redhat_subscription"
-      sudo subscription-manager unregister
+  if [[ $LINUX_TYPE == 'rhel' ]]; then
+      local subscription_manager_status=$(sudo subscription-manager status| grep "Overall Status" )
+
+      # Add different keyterms for RedHat system register status like register, disable(simple access content), etc.
+	    local different_words_for_register=( "disabled" "register"  )
+      
+      # Convert to lowercase for case insesitive match
+      local subscription_manager_status=${subscription_manager_status,,}
+
+      # Register only when the system subscription status is registered.
+      for each_word in "${different_words_for_register[@]}";do
+        case "${subscription_manager_status}" in
+          *"$each_word"*)
+
+            # echo "unregister_redhat_subscription"
+            sudo subscription-manager unregister
+            break
+            ;;
+        esac
+      done
   fi
 }
 
@@ -1344,12 +1363,17 @@ main() {
       ;;
 
     attest-guest)
+      # identify_linux_distribution_type() checks if RedHat credentials are set which is dependency for rpm package installation in RedHat
+      identify_linux_distribution_type
+
       install_rust
       install_sev_snp_measure
       install_dependencies
       
-      # Unregister RedHat subscription from the host
+      # Unregister RedHat subscription after all installation steps
       unregister_redhat_subscription
+      
+      
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
       attest_guest
