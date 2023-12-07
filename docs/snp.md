@@ -13,6 +13,7 @@ CLI tool.
 Tested on the following OS distributions:
 - Ubuntu 20.04
 - Ubuntu 22.04
+- RedHat 9.2
 
 Image formats supported:
 - qcow2
@@ -51,6 +52,16 @@ Download the script and add the execute permission:
 wget https://github.com/amd/sev-utils/raw/main/tools/snp.sh
 chmod +x snp.sh
 ```
+### RedHat 
+Note: Requires RedHat Active subscription
+
+On Redhat Host, make sure you set the following environment variables for installing packages and RedHat Guest image (qcow2) via RedHat API using your RedHat credentials:
+
+```
+export RHEL_SUBS_MGR_USER=< Your Redhat Portal Username >
+export RHEL_SUBS_MGR_PASS=< Your RedHat Portal Password >
+export REDHAT_OFFLINE_TOKEN=< Your RedHat API offline token >
+```
 
 Setup the host by building SNP patched versions of qemu, ovmf and the linux kernel:
 ```
@@ -81,6 +92,8 @@ for ovmf, initrd, kernel and the kernel append parameters.
 The `--non-upm` option can be specified with the above command if a non-upm version 
 of the kernel is desired. The `setup-host` command must be run with this same option 
 if launching the guest with a non-upm kernel.
+
+Note: non-upm option for RedHat operating system is not supported.
 
 Attest the guest using the following command:
 ```
