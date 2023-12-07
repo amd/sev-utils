@@ -80,16 +80,22 @@ GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
-GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key}"
+GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}/${GUEST_NAME}-key}"
 GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
-IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
+IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}/${GUEST_NAME}.qcow2}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
+# Redhat Sensitive Credentials -- User must specify, no default value set
+RHEL_SUBS_MGR_USER="${RHEL_SUBS_MGR_USER}"
+RHEL_SUBS_MGR_PASS="${RHEL_SUBS_MGR_PASS}"
+REDHAT_OFFLINE_TOKEN="${REDHAT_OFFLINE_TOKEN}"
+
+
 # URLs and repos
-AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
-AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
+AMDSEV_URL="https://github.com/LakshmiSaiHarika/AMDSEV.git"
+AMDSEV_DEFAULT_BRANCH="rhel-fix"
 AMDSEV_NON_UPM_BRANCH="snp-non-upm"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.3.1"
@@ -169,9 +175,6 @@ install_nasm_from_source() {
     return 0
   fi
 
-  # Remove package manager nasm
-  sudo apt purge nasm
-  
   pushd "${WORKING_DIR}" >/dev/null
 
   # Install from source
@@ -210,21 +213,13 @@ install_sev_snp_measure() {
   pip install sev-snp-measure
 }
 
-install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  source "${HOME}/.cargo/env" 2>/dev/null || true
-
-  if [ -f "${dependencies_installed_file}" ]; then
-    echo -e "Dependencies previously installed"
-    return 0
-  fi
-
+ubuntu_install_dependencies() {
   # Build dependencies
   sudo apt install -y build-essential git
 
   # ACL for setting access to /dev/sev
   sudo apt install -y acl
-
+  
   # qemu dependencies
   sudo apt install -y ninja-build pkg-config
   sudo apt install -y libglib2.0-dev
@@ -233,7 +228,9 @@ install_dependencies() {
   
   # ovmf dependencies
   sudo apt install -y python-is-python3 uuid-dev iasl
+  
   #sudo apt install -y nasm
+  sudo apt purge nasm
   install_nasm_from_source
 
   # kernel dependencies
@@ -254,7 +251,8 @@ install_dependencies() {
   ##sudo apt install -y dracut-core
 
   # cloud-utils dependency
-  sudo apt install -y cloud-image-utils
+  # genisoimage for userdata and metadata seed
+  sudo apt install -y cloud-image-utils genisoimage curl
 
   # Virtualization tools for resizing image
   # virt-resize currently does not work with cloud-init images. It changes the partition 
@@ -264,14 +262,112 @@ install_dependencies() {
 
   # pip needed for sev-snp-measure
   sudo apt install -y python3-pip
+}
+
+rhel_subscription_mgr_register(){
+	local subscription_manager_status=$(sudo subscription-manager status| grep "Overall Status" )
+
+	# Add different keyterms for RedHat system unregister status like unknown, unregister, etc.
+	local different_words_for_unregister=( "unknown" "unregister"  )
+
+	# Convert to lowercase for case insesitive match
+	local subscription_manager_status=${subscription_manager_status,,}
+
+	# Register only when the system subscription status is unregistered.
+	for each_word in "${different_words_for_unregister[@]}";do
+		case "${subscription_manager_status}" in
+			*"$each_word"*)
+				
+        check_if_redhat_credentials_set
+
+				# Activate RedHat Subscription
+				sudo subscription-manager register --username ${RHEL_SUBS_MGR_USER} --password ${RHEL_SUBS_MGR_PASS} --force
+				break
+				;;
+		esac
+	done
+}
+
+rhel_install_dependencies() {    
+  # Step 1: Activate RedHat Subscription
+  rhel_subscription_mgr_register
+
+  # Build dependencies
+  sudo dnf install -y git
+  sudo dnf install -y make automake gcc gcc-c++ kernel-devel
+
+  # make dependencies
+  sudo dnf install -y libuuid-devel dwarves perl 
+
+  # Enable RedHat Repository for qemu dependencies
+  sudo subscription-manager repos --enable codeready-builder-for-rhel-9-x86_64-rpms
+
+  # qemu dependencies
+  sudo dnf install -y ninja-build
+  sudo dnf install -y pkg-config
+  sudo dnf install  -y glib2-devel
+  sudo dnf install  -y pixman-devel
+  sudo dnf install -y libslirp-devel
+   
+  # ovmf dependencies
+  sudo dnf install -y uuid-devel
+  sudo dnf install -y iasl
+  sudo dnf remove nasm
+  install_nasm_from_source
+
+  # kernel dependencies
+  sudo dnf install -y rsync
+  sudo dnf install -y ncurses-devel
+  
+  # libssl-dev is openssl-devel in RHEL
+  # rpm-build -- Scripts and executable programs used to build packages
+  sudo dnf install -y rpm-build
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+  
+  # sev-snp-measure
+  sudo dnf install -y python3-pip
+  
+  sudo dnf install -y curl
+
+  # Handles grub menu config 
+  sudo dnf info -y grubby
+
+  # genisoimage for cloud-init data(VM user-data and metadata) seed
+    # genisoimage utility supported until RedHat version 8
+    # For genisoimage utility support in RedHat 9, using epel
+  sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+  sudo dnf install -y genisoimage
+
+  sudo dnf install -y curl
+}
+
+install_dependencies(){
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+
+  if [ -f "${dependencies_installed_file}" ]; then
+    echo -e "Dependencies previously installed"
+    return 0
+  fi
+
+  # Linux Distribution specific installation
+  case ${LINUX_TYPE} in
+    ubuntu)
+      ubuntu_install_dependencies
+      ;;
+    rhel)
+      rhel_install_dependencies
+      ;;
+  esac
   
   echo "true" > "${dependencies_installed_file}"
 }
 
-set_grub_default_snp() {
+ubuntu_set_grub_default_snp(){
   # Get the path to host kernel and the version for setting grub default
-  local host_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/host/debian/linux-image/boot/vmlinuz*"))
-  local host_kernel_version=$(echo "${host_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+  local host_kernel_version=$(get_host_kernel_version)
 
   if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
     echo -e "Default grub already has SNP [${host_kernel_version}] set"
@@ -294,6 +390,30 @@ set_grub_default_snp() {
   sudo update-grub
 }
 
+grubby_to_set_grub_default_snp(){  
+  # Get the path to host kernel package and the version for setting grub default
+  local host_kernel_version=$(get_host_kernel_version)
+  local host_snp_kernel_version="vmlinuz-${host_kernel_version}"    
+
+  # check if the default kernel is set to latest snp kernel version
+  local default_grub_kernel=$(sudo grubby --default-kernel)
+
+  # Setting default to the snp kernel
+  sudo grubby --set-default="$host_snp_kernel_version"
+}
+
+set_grub_default_snp() {
+  case ${LINUX_TYPE} in
+    ubuntu)
+      ubuntu_set_grub_default_snp
+      ;;
+
+    rhel | fedora) 
+      grubby_to_set_grub_default_snp
+      ;;
+  esac
+}
+
 generate_guest_ssh_keypair() {
   if [[ -f "${GUEST_SSH_KEY_PATH}" \
     && -f "${GUEST_SSH_KEY_PATH}.pub" ]]; then
@@ -305,24 +425,54 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+check_if_redhat_token_set(){
+  if [ -z $REDHAT_OFFLINE_TOKEN ]; then
+      echo
+      echo "set environment variable REDHAT_OFFLINE_TOKEN to RedHat Generated Token API"
+      return 1
+  fi
+
+}
+
+download_cloud_init_image(){
+  local url_flag=1;
+  case ${LINUX_TYPE} in
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+      ;;
+    rhel)
+      check_if_redhat_token_set
+
+      # Download guest image from the RedHat API
+      /bin/bash "$PWD/download_redhat_guest_image.sh"
+      url_flag=0
+      ;;
+  esac
+  if [ $url_flag -eq 1 ];then
+    # Download qcow2 image from static URL
+    wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}" 
+  fi
+}
+
 cloud_init_create_data() {
-  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" && \
-    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"  && \
+  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data" && \
+    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data"  && \
     -f "${IMAGE}" ]]; then
     echo -e "cloud-init data already generated"
     return 0
   fi
 
+
   local pub_key=$(cat "${GUEST_SSH_KEY_PATH}.pub")
 
 # Seed image metadata
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data" <<EOF
 instance-id: "${GUEST_NAME}"
 local-hostname: "${GUEST_NAME}"
 EOF
 
 # Seed image user data
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data" <<EOF
 #cloud-config
 chpasswd:
   expire: false
@@ -338,13 +488,11 @@ users:
       - ${pub_key}
 EOF
 
-  # Create the seed image with metadata and user data
-  cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
-
-  # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  # to create an ISO image that includes user-data and meta-data
+    genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}/meta-data"
+  
+  # Download KVM Guest Image either from Static URL or RedHat Portal via APIs
+  download_cloud_init_image
 }
 
 resize_guest() {
@@ -479,9 +627,21 @@ build_guest_initrd() {
     --add-drivers "sev-guest"
 }
 
+get_guest_kernel_version(){
+
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/" >/dev/null
+
+    local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
+    local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}'|tr -d '"')
+
+    echo "$kernel_version$kernel_type"
+  popd >/dev/null
+}
+
 save_binary_paths() {
-  local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-  local guest_kernel_version=$(ls "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+  # Referring to bzImage copied file
+  local guest_kernel_version=$(get_guest_kernel_version)
+  local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-${guest_kernel_version}"))
   GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${guest_kernel_version}"
 
 # Save binary paths in source file
@@ -589,6 +749,17 @@ stop_guests() {
   echo -e "No qemu processes running!"
 }
 
+get_host_kernel_version(){
+  # Get latest host snp kernel package file path
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux/host/" >/dev/null
+
+  local kernel_version=$(cat .config | grep 'Linux/' | awk -F ' ' '{print $3}')
+  local kernel_type=$(cat .config | grep "CONFIG_LOCALVERSION" | grep -v "^#"|awk -F '="' '{print $NF}'|tr -d '"')
+
+  echo "$kernel_version$kernel_type"
+  popd >/dev/null
+}
+
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -611,15 +782,23 @@ build_and_install_amdsev() {
   # Build and copy files
   ./build.sh --package
   sudo cp kvm.conf /etc/modprobe.d/
+
+  # Get guest kernel version from the package
+  local guest_kernel_version=$(get_guest_kernel_version)
+
+  # Standardize vmlinuz location across different linux distributions
+  local bzImage_file=$(find ${SETUP_WORKING_DIR}/AMDSEV/linux/guest -name "bzImage"| head -1)
+  cp -v $bzImage_file ${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-$guest_kernel_version
   
-  # Install
-  cd $(ls -d snp-release-* | head -1)
+  # Install latest snp-release
+  cd $(ls -dt snp-release-* | grep -v tar| head -1)
+
   sudo ./install.sh
   
   popd >/dev/null
 
   # Give kvm group rw access to /dev/sev
-  sudo setfacl -m g:kvm:rw,d:g:kvm:rw /dev/sev || true
+  sudo setfacl -m g:kvm:rw /dev/sev
   
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
@@ -634,12 +813,41 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+
+get_guest_kernel_package(){
+  # guest_kernel_package == guest_kernel_deb
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
+    case ${LINUX_TYPE} in
+      ubuntu)
+          echo $(realpath linux-image*snp-guest*.deb| grep -v dbg)
+        ;;
+      rhel)
+          echo $(realpath $(ls -t kernel-*snp_guest*.rpm| grep -v header| head -1))
+          ;;
+    esac
+  popd>/dev/null
+}
+
+get_package_install_command(){
+    case ${LINUX_TYPE} in
+    ubuntu)
+      echo "dpkg -i"
+      ;;
+    rhel)
+      echo "dnf install -y"
+      ;;
+  esac
+}
+
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
   if [ ! -f "${IMAGE}" ] && ${SKIP_IMAGE_CREATE}; then
     >&2 echo -e "Image file specified, but doesn't exist"
     return 1
   fi
+
+  # Create separate Guest directory
+  mkdir -p "${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
 
   # Build base qemu cmdline and add direct boot bins
   build_base_qemu_cmdline "${QEMU_BIN}"
@@ -654,11 +862,11 @@ setup_and_launch_guest() {
     #resize_guest
 
     # For the cloud-init image, just resize the image
-    qemu-img resize "${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img" "${GUEST_SIZE_GB}G"
+    qemu-img resize "$IMAGE" "${GUEST_SIZE_GB}G"
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
-    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}/ciiso.iso"
   fi
 
   local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
@@ -667,18 +875,36 @@ setup_and_launch_guest() {
     "${QEMU_CMDLINE_FILE}"
 
     # Install the guest kernel, retrieve the initrd and then reboot
-    local guest_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-    local guest_kernel_version=$(echo "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
-    local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
-    local guest_initrd_basename="initrd.img-${guest_kernel_version}"
-    wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+    local guest_kernel_version=$(get_guest_kernel_version)
+    
+    # initrd/initramfs
+    local guest_initrd_basename="init*${guest_kernel_version}*"
+
+    local package_install_command=$(get_package_install_command)
+
+    # Locate guest kernel package in the host
+    local guest_kernel_package=$(get_guest_kernel_package)
+  
+    # Copy pckg into guest and Install 
+    wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
+    ssh_guest_command "sudo $package_install_command /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
+
+    local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
+    initrd_filepath=$(echo $initrd_filepath| tr -d '\r')
+
+    # Copy initrd/initramfs into home folder; change its permission to 644 for performing scp from guest into host
+    ssh_guest_command "sudo cp  $(realpath ${initrd_filepath}) /home/${GUEST_USER}"
+    ssh_guest_command "sudo chmod 644  /home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))"
+    scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
+    
+    # Overwrite the initrd/initramfs file path in host
+    GENERATED_INITRD_BIN=$(ls ${LAUNCH_WORKING_DIR}/ini*${guest_kernel_version}* )
+
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
     # Update the initrd file path and name in the guest launch source-bins file
-    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${GENERATED_INITRD_BIN}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # A few seconds for shutdown to complete
     sleep 3
@@ -692,6 +918,9 @@ setup_and_launch_guest() {
   # To be used as the guest initrd
   # NO LONGER NEEDED: initrd built after kernel generation (build_guest_initrd)
   #initrd_add_sev_guest_module "${INITRD_BIN}"
+
+  # To update INITRD_BIN to initramfs or intrd
+  source "${LAUNCH_WORKING_DIR}/source-bins"
 
   if $UPM; then
     add_qemu_cmdline_opts "-machine confidential-guest-support=sev0,memory-backend=ram1,kvm-type=protected"
@@ -954,13 +1183,86 @@ attest_guest() {
     || { >&2 echo -e "FAIL: measurements do not match"; return 1; }
 }
 
+check_if_redhat_credentials_set(){
+  local flag=0
+  if [ -z $RHEL_SUBS_MGR_USER ]; then
+      echo "set environment variable RHEL_SUBS_MGR_USER to RedHat Portal Username"
+      flag=1
+  fi
 
+  if [ -z $RHEL_SUBS_MGR_PASS ]; then
+      echo "set environment variable RHEL_SUBS_MGR_PASS to RedHat Portal Password"
+      flag=1
+  fi
+  return $flag
+}
+
+identify_linux_distribution_type(){ 
+  # Identify Linux Distribution type --Ubuntu/RedHat
+  [ -e /etc/os-release ] && . /etc/os-release
+
+  case ${ID,,} in
+    ubuntu | debian)
+    LINUX_TYPE='ubuntu'
+    ;;
+
+    rhel)
+    LINUX_TYPE='rhel'
+    RHEL_VERSION=${VERSION_ID}
+    GUEST_ROOT_LABEL="root"
+
+    if [[ "$UPM" = false ]]; then
+      echo "Non-UPM for Redhat is not supported "
+      return 1
+    fi
+
+    check_if_redhat_credentials_set
+    ;;
+
+    fedora)
+    LINUX_TYPE='fedora'
+
+    if [[ "$UPM" = false ]]; then
+      echo "Non-UPM for Fedora is not supported "
+      return 1
+    fi
+    ;;
+  esac
+
+  GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
+}
+
+unregister_redhat_subscription(){
+  if [[ $LINUX_TYPE == 'rhel' ]]; then
+      local subscription_manager_status=$(sudo subscription-manager status| grep "Overall Status" )
+
+      # Add different keyterms for RedHat system register status like register, disable(simple access content), etc.
+	    local different_words_for_register=( "disabled" "register"  )
+      
+      # Convert to lowercase for case insesitive match
+      local subscription_manager_status=${subscription_manager_status,,}
+
+      # Register only when the system subscription status is registered.
+      for each_word in "${different_words_for_register[@]}";do
+        case "${subscription_manager_status}" in
+          *"$each_word"*)
+
+            # echo "unregister_redhat_subscription"
+            sudo subscription-manager unregister
+            break
+            ;;
+        esac
+      done
+  fi
+}
 
 ###############################################################################
 
 # Main
 
+
 main() {
+ 
   # A command must be specified
   if [ -z "${1}" ]; then
     usage
@@ -1035,6 +1337,7 @@ main() {
       ;;
 
     setup-host)
+      identify_linux_distribution_type
       install_dependencies
 
       if $UPM; then
@@ -1042,13 +1345,13 @@ main() {
       else
         build_and_install_amdsev "${AMDSEV_NON_UPM_BRANCH}"
       fi
-
       source "${SETUP_WORKING_DIR}/source-bins"
       set_grub_default_snp
       echo -e "\nThe host must be rebooted for changes to take effect"
       ;;
 
     launch-guest)
+      identify_linux_distribution_type
       if [ ! -d "${SETUP_WORKING_DIR}" ]; then
         echo -e "Setup directory does not exist, please run 'setup-host' prior to 'launch-guest'"
         return 1
@@ -1068,9 +1371,17 @@ main() {
       ;;
 
     attest-guest)
+      # identify_linux_distribution_type() checks if RedHat credentials are set which is dependency for rpm package installation in RedHat
+      identify_linux_distribution_type
+
       install_rust
       install_sev_snp_measure
       install_dependencies
+      
+      # Unregister RedHat subscription after all installation steps
+      unregister_redhat_subscription
+      
+      
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
       attest_guest
