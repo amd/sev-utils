@@ -78,6 +78,9 @@ SKIP_IMAGE_CREATE=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
 GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
+GUEST_MEM_SIZE_MB="${GUEST_MEM_SIZE_MB:-2048}"
+GUEST_SMP="${GUEST_SMP:-4}"
+CPU_MODEL="${CPU_MODEL:-EPYC-v4}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
 GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key}"
@@ -278,6 +281,14 @@ set_grub_default_snp() {
     return 0
   fi
 
+  cat /boot/grub/grub.cfg | grep submenu
+
+  # Retrieve snp submenu name from grub.cfg
+  local snp_submenu_name=$(cat /boot/grub/grub.cfg \
+    | grep "submenu.*Advanced options" \
+    | grep -o -P "(?<=').*" \
+    | grep -o -P "^[^']*")
+
   # Retrieve snp menuitem name from grub.cfg
   local snp_menuitem_name=$(cat /boot/grub/grub.cfg \
     | grep "menuentry.*${host_kernel_version}" \
@@ -289,7 +300,7 @@ set_grub_default_snp() {
   sudo cp /etc/default/grub /etc/default/grub_bkup
   
   # Replace grub default with snp menuitem name
-  sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"Advanced options for Ubuntu>${snp_menuitem_name}\"|g" "/etc/default/grub"
+  sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"${snp_submenu_name}>${snp_menuitem_name}\"|g" "/etc/default/grub"
   
   sudo update-grub
 }
@@ -543,9 +554,10 @@ build_base_qemu_cmdline() {
   # Base cmdline
   echo -n "${qemu_bin} " > "${QEMU_CMDLINE_FILE}"
   add_qemu_cmdline_opts "--enable-kvm"
-  add_qemu_cmdline_opts "-cpu EPYC-Milan-v2"
-  add_qemu_cmdline_opts "-smp 2"
-  add_qemu_cmdline_opts "-m 4000M"
+  add_qemu_cmdline_opts "-cpu ${CPU_MODEL}"
+  add_qemu_cmdline_opts "-machine q35"
+  add_qemu_cmdline_opts "-smp ${GUEST_SMP}"
+  add_qemu_cmdline_opts "-m ${GUEST_MEM_SIZE_MB}M"
   add_qemu_cmdline_opts "-no-reboot"
   add_qemu_cmdline_opts "-vga std"
   add_qemu_cmdline_opts "-monitor pty"
@@ -589,6 +601,25 @@ stop_guests() {
   echo -e "No qemu processes running!"
 }
 
+set_acl_for_sev_device() {
+  local rc_local_file="/etc/rc.local"
+  local setfacl_command="sudo setfacl -m g:kvm:rw /dev/sev"
+
+  # Skip if already in rc.local
+  if [ -f "${rc_local_file}" ] && cat "${rc_local_file}" | grep "${setfacl_command}" 2>&1 >/dev/null; then
+    return 0
+  fi
+
+  # Append, but keep the exit at the end
+  if [ -f "${rc_local_file}" ] && cat "${rc_local_file}" | grep "exit" 2>&1 >/dev/null; then
+    sed -i -e "s|\(^.*exit.*$\)|${setfacl_command}\n\1|g" "${rc_local_file}"
+    return 0
+  fi
+
+  # Otherwise, just append
+  echo "${setfacl_command}" | sudo tee -a "${rc_local_file}" >/dev/null
+}
+
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -619,7 +650,7 @@ build_and_install_amdsev() {
   popd >/dev/null
 
   # Give kvm group rw access to /dev/sev
-  sudo setfacl -m g:kvm:rw,d:g:kvm:rw /dev/sev || true
+  set_acl_for_sev_device
   
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
@@ -693,18 +724,23 @@ setup_and_launch_guest() {
   # NO LONGER NEEDED: initrd built after kernel generation (build_guest_initrd)
   #initrd_add_sev_guest_module "${INITRD_BIN}"
 
+  add_qemu_cmdline_opts "-machine memory-encryption=sev0,vmport=off"
+
   if $UPM; then
-    add_qemu_cmdline_opts "-machine confidential-guest-support=sev0,memory-backend=ram1,kvm-type=protected"
-    add_qemu_cmdline_opts "-object memory-backend-memfd-private,id=ram1,size=1G,share=true"
+    add_qemu_cmdline_opts "-object memory-backend-memfd,id=ram1,size=${GUEST_MEM_SIZE_MB}M,share=true,prealloc=false"
+    add_qemu_cmdline_opts "-machine memory-backend=ram1"
   else
     add_qemu_cmdline_opts "-machine memory-encryption=sev0,vmport=off"
   fi
 
+  # No longer needed with latest QEMU
   # qemu 7.2 issue: pc-q35-7.1
+  #add_qemu_cmdline_opts "-machine pc-q35-7.1"
+
   # snp object and kernel-hashes on
-  # ovmf, initrd, kernel and append options
-  add_qemu_cmdline_opts "-machine pc-q35-7.1"
   add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on"
+
+  # ovmf, initrd, kernel and append options
   add_qemu_cmdline_opts "-drive if=pflash,format=raw,readonly=on,file=${OVMF_BIN}"
   add_qemu_cmdline_opts "-initrd ${INITRD_BIN}"
   add_qemu_cmdline_opts "-kernel ${KERNEL_BIN}"
@@ -821,11 +857,11 @@ setup_guest_attestation() {
   git fetch current "${SNPGUEST_BRANCH}"
   
   # Handle checkout if tag is specified
-	if [[ "${SNPGUEST_BRANCH}" =~ "tags/" ]]; then
-		git checkout "${SNPGUEST_BRANCH}"
-	else
-		git checkout "current/${SNPGUEST_BRANCH}"
-	fi
+  if [[ "${SNPGUEST_BRANCH}" =~ "tags/" ]]; then
+    git checkout "${SNPGUEST_BRANCH}"
+  else
+    git checkout "current/${SNPGUEST_BRANCH}"
+  fi
 
   cargo build -r
   scp_guest_command target/release/snpguest "${GUEST_USER}@localhost:/home/${GUEST_USER}"
