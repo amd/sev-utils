@@ -95,7 +95,7 @@ AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
 AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
 AMDSEV_NON_UPM_BRANCH="snp-non-upm"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
-SNPGUEST_BRANCH="tags/v0.3.1"
+SNPGUEST_BRANCH="tags/v0.3.2"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
@@ -649,8 +649,10 @@ build_and_install_amdsev() {
   
   popd >/dev/null
 
+  # Removing this from here for now, as the device gets recreated at various times,
+  # therefore requiring the ACL to be reset. Moving to launch guest section.
   # Give kvm group rw access to /dev/sev
-  set_acl_for_sev_device
+  #set_acl_for_sev_device
   
   # Add the user to kvm group so that qemu can be run without root permissions
   sudo usermod -a -G kvm "${USER}"
@@ -671,6 +673,16 @@ setup_and_launch_guest() {
     >&2 echo -e "Image file specified, but doesn't exist"
     return 1
   fi
+
+  # TEMPORARY until sev-snp-measure is updated to pass in TCB kernel modifier flags
+  # Changes in AMDESE/linux set debug_swap on by default and affect the measurement
+  sudo modprobe -r kvm_amd
+  sudo modprobe kvm_amd debug_swap=0
+
+  # This should be done in the setup-host, but needed here due to device being
+  # recreated by above commands
+  # Give kvm group rw access to /dev/sev
+  sudo setfacl -m g:kvm:rw /dev/sev
 
   # Build base qemu cmdline and add direct boot bins
   build_base_qemu_cmdline "${QEMU_BIN}"
