@@ -674,11 +674,6 @@ setup_and_launch_guest() {
     return 1
   fi
 
-  # TEMPORARY until sev-snp-measure is updated to pass in TCB kernel modifier flags
-  # Changes in AMDESE/linux set debug_swap on by default and affect the measurement
-  sudo modprobe -r kvm_amd
-  sudo modprobe kvm_amd debug_swap=0
-
   # This should be done in the setup-host, but needed here due to device being
   # recreated by above commands
   # Give kvm group rw access to /dev/sev
@@ -1107,6 +1102,12 @@ main() {
 
       verify_snp_host
       install_dependencies
+
+      # TEMPORARY until sev-snp-measure is updated to pass in TCB kernel modifier flags
+      # Changes in AMDESE/linux set debug_swap on by default and affect the measurement
+      sudo modprobe -r kvm_amd
+      sudo modprobe kvm_amd debug_swap=0
+
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
 
