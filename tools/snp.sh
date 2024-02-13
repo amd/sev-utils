@@ -281,11 +281,11 @@ set_grub_default_snp() {
     return 0
   fi
 
-  cat /boot/grub/grub.cfg | grep submenu
-
   # Retrieve snp submenu name from grub.cfg
   local snp_submenu_name=$(cat /boot/grub/grub.cfg \
-    | grep "submenu.*Advanced options" \
+    | grep -A1 "submenu.*Advanced options" \
+    | grep -B1 "${host_kernel_version}" \
+    | grep "submenu" \
     | grep -o -P "(?<=').*" \
     | grep -o -P "^[^']*")
 
