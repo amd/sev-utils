@@ -663,7 +663,7 @@ build_and_install_amdsev() {
   cd "AMDSEV"
   git remote set-url current "${AMDSEV_URL}"
   git fetch current "${amdsev_branch}"
-  git checkout "current/${amdsev_branch}"
+  git checkout "${amdsev_branch}"
 
   # Based on latest AMDSEV documentation
   # Delete the ovmf/ directory prior to the build step for ovmf re-initialization
