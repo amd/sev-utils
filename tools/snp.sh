@@ -637,7 +637,7 @@ build_and_install_amdsev() {
   cd "AMDSEV"
   git remote set-url current "${AMDSEV_URL}"
   git fetch current "${amdsev_branch}"
-  git checkout "current/${amdsev_branch}"
+  git checkout "${amdsev_branch}"
 
   # Build and copy files
   ./build.sh --package
