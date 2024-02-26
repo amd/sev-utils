@@ -759,8 +759,8 @@ setup_and_launch_guest() {
     # Update the initrd file path and name in the guest launch source-bins file
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
-    # A few seconds for shutdown to complete
-    sleep 10
+    # Wait for shutdown to complete
+    wait_and_retry_command "! ps aux | grep \"${WORKING_DIR}.*qemu.*${IMAGE}\" | grep -v \"tail.*qemu.log\" | grep -v \"grep.*qemu\""
 
     # Call the launch-guest again now that the image is prepped
     setup_and_launch_guest
@@ -875,15 +875,15 @@ wait_and_retry_command() {
   local max_tries=30
   
   for ((i=1; i<=${max_tries}; i++)); do
-    if ! (${command} >/dev/null 2>&1); then
+    if ! eval "${command} >/dev/null 2>&1"; then
       sleep 1
       continue
     fi
-    ${command}
+    eval "${command}"
     return 0
   done
   
-  >&2 echo -e "ERROR: Timed out trying to connect to guest"
+  >&2 echo -e "ERROR: Timed out trying to run command"
   return 1
 }
 
