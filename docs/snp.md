@@ -48,7 +48,7 @@ For more information, see the 'Enabling/Disabling SNP' section of the following 
 
 Download the script and add the execute permission:
 ```
-wget https://github.com/amd/sev-utils/raw/main/tools/snp.sh
+wget https://github.com/amd/sev-utils/raw/coco/tools/snp.sh
 chmod +x snp.sh
 ```
 

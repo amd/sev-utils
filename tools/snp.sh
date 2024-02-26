@@ -91,9 +91,9 @@ IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
-AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
-AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
-AMDSEV_NON_UPM_BRANCH="snp-non-upm"
+AMDSEV_URL="https://github.com/confidential-containers/amdese-amdsev.git"
+AMDSEV_DEFAULT_BRANCH="amd-snp-202402240000"
+AMDSEV_NON_UPM_BRANCH="amd-snp-202306070000"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.3.2"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
