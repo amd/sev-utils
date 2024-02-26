@@ -202,15 +202,10 @@ install_rust() {
 }
 
 install_sev_snp_measure() {
-  if which sev-snp-measure 2>/dev/null 1>&2; then
-    echo -e "sev-snp-measure previously installed"
-    return 0
-  fi
-
   # Install sev-snp-measure
   # pip issue on 20.04 - some openssl bug
   #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
-  pip install sev-snp-measure
+  pip install --upgrade sev-snp-measure
 }
 
 install_dependencies() {
@@ -1102,11 +1097,6 @@ main() {
 
       verify_snp_host
       install_dependencies
-
-      # TEMPORARY until sev-snp-measure is updated to pass in TCB kernel modifier flags
-      # Changes in AMDESE/linux set debug_swap on by default and affect the measurement
-      sudo modprobe -r kvm_amd
-      sudo modprobe kvm_amd debug_swap=0
 
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
