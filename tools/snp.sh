@@ -273,7 +273,7 @@ install_dependencies() {
 
 set_grub_default_snp() {
   # Get the path to host kernel and the version for setting grub default
-  local host_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/host/debian/linux-image/boot/vmlinuz*"))
+  local host_kernel=$(find "${SETUP_WORKING_DIR}/AMDSEV/linux/host/debian" -type f -name "vmlinuz*")
   local host_kernel_version=$(echo "${host_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
 
   if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
