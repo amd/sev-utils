@@ -156,7 +156,7 @@ cleanup() {
 }
 
 verify_snp_host() {
-  if ! sudo dmesg | grep -i "SEV-SNP enabled" 2>&1 >/dev/null; then
+  if ! sudo dmesg | grep -i "SEV-SNP enabled\|SEV-SNP supported" 2>&1 >/dev/null; then
     echo -e "SEV-SNP not enabled on the host. Please follow these steps to enable:\n\
     $(echo "${AMDSEV_URL}" | sed 's|\.git$||g')/tree/${AMDSEV_DEFAULT_BRANCH}#prepare-host"
     return 1
