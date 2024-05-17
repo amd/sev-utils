@@ -267,10 +267,18 @@ install_dependencies() {
   echo "true" > "${dependencies_installed_file}"
 }
 
+# Retrieve SNP host kernel from the host kernel config file via host kernel version & kernel hash parameters
+get_host_kernel_version() {
+  local host_kernel_config="${SETUP_WORKING_DIR}/AMDSEV/linux/host/.config"
+  local kernel_version=$(cat ${host_kernel_config} | grep "^# Linux/.*Kernel Configuration$" | awk -F ' ' '{print $3}')
+  local kernel_hash=$(cat ${host_kernel_config} | grep "CONFIG_LOCALVERSION" | grep -v "^#" | awk -F '="' '{print $2}' | tr -d '"')
+  local host_kernel="${kernel_version}${kernel_hash}"
+  echo "${host_kernel}"
+}
+
 set_grub_default_snp() {
   # Get the path to host kernel and the version for setting grub default
-  local host_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/host/debian/linux-image/boot/vmlinuz*"))
-  local host_kernel_version=$(echo "${host_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+  local host_kernel_version=$(get_host_kernel_version)
 
   if cat /etc/default/grub | grep "${host_kernel_version}" | grep -v "^#" 2>&1 >/dev/null; then
     echo -e "Default grub already has SNP [${host_kernel_version}] set"
@@ -485,10 +493,21 @@ build_guest_initrd() {
     --add-drivers "sev-guest"
 }
 
+# Retrieve SNP guest kernel from the guest kernel config file via guest kernel version & kernel hash parameters
+get_guest_kernel_version() {
+  local guest_kernel_config="${SETUP_WORKING_DIR}/AMDSEV/linux/guest/.config"
+  local kernel_version=$(cat ${guest_kernel_config} | grep 'Linux/' | awk -F ' ' '{print $3}')
+  local kernel_hash=$(cat ${guest_kernel_config} | grep "CONFIG_LOCALVERSION" | grep -v "^#" | awk -F '="' '{print $2}' | tr -d '"')
+  local guest_kernel="${kernel_version}${kernel_hash}"
+  echo "${guest_kernel}"
+}
+
 save_binary_paths() {
-  local guest_kernel=$(ls $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-  local guest_kernel_version=$(ls "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+  local guest_kernel_version=$(get_guest_kernel_version)
   GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img-${guest_kernel_version}"
+
+  # Guest kernel file path points to standard kernel file path across different linux distribution
+  local guest_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-${guest_kernel_version}"))
 
 # Save binary paths in source file
 cat > "${SETUP_WORKING_DIR}/source-bins" <<EOF
@@ -638,8 +657,20 @@ build_and_install_amdsev() {
   ./build.sh --package
   sudo cp kvm.conf /etc/modprobe.d/
   
-  # Install
-  cd $(ls -d snp-release-* | head -1)
+  # Get guest kernel version from the guest config file
+  local guest_kernel_version=$(get_guest_kernel_version)
+
+  # To standardize guest kernel file location across different linux distributions
+  local bzImage_file=$(find ${SETUP_WORKING_DIR}/AMDSEV/linux/guest -name "bzImage" | head -1)
+  local guest_kernel_bin="${SETUP_WORKING_DIR}/AMDSEV/linux/guest/vmlinuz-${guest_kernel_version}"
+
+  # Guest kernel binary is not present inside guest directory for some Linux Distributions like RH and Fedora,
+  # because AMDSEV does not copy guest kernel file inside guest directory during SNP package build process in RH, fedora
+  # so, copying bzImage file into guest kernel binary file if vmlinuz is absent inside the guest directory
+  [ -f ${guest_kernel_bin} ] || cp -v ${bzImage_file} ${guest_kernel_bin}
+
+  # Install latest snp-release
+  cd $(ls -dt */ | grep snp-release- | head -1)
   sudo ./install.sh
   
   popd >/dev/null
@@ -700,8 +731,7 @@ setup_and_launch_guest() {
     "${QEMU_CMDLINE_FILE}"
 
     # Install the guest kernel, retrieve the initrd and then reboot
-    local guest_kernel=$(echo $(realpath "${SETUP_WORKING_DIR}/AMDSEV/linux/guest/debian/linux-image/boot/vmlinuz*"))
-    local guest_kernel_version=$(echo "${guest_kernel}" | sed "s|.*/boot/vmlinuz-\(.*\)|\1|g")
+    local guest_kernel_version=$(get_guest_kernel_version)
     local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
     local guest_initrd_basename="initrd.img-${guest_kernel_version}"
     wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
