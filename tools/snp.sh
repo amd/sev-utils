@@ -749,7 +749,7 @@ setup_and_launch_guest() {
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # A few seconds for shutdown to complete
-    sleep 3
+    sleep 10
 
     # Call the launch-guest again now that the image is prepped
     setup_and_launch_guest
