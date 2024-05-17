@@ -723,7 +723,7 @@ setup_and_launch_guest() {
     #resize_guest
 
     # For the cloud-init image, just resize the image
-    qemu-img resize "${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img" "${GUEST_SIZE_GB}G"
+    qemu-img resize "$IMAGE" "${GUEST_SIZE_GB}G"
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
