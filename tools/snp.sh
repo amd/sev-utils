@@ -658,6 +658,10 @@ build_and_install_amdsev() {
   git fetch current "${amdsev_branch}"
   git checkout "current/${amdsev_branch}"
 
+  # Based on latest AMDSEV documentation
+  # Delete the ovmf/ directory prior to the build step for ovmf re-initialization
+  [ ! -d "ovmf" ] || rm -rf "ovmf"
+
   # Build and copy files
   ./build.sh --package
   sudo cp kvm.conf /etc/modprobe.d/
@@ -778,7 +782,7 @@ setup_and_launch_guest() {
   add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on"
 
   # ovmf, initrd, kernel and append options
-  add_qemu_cmdline_opts "-drive if=pflash,format=raw,readonly=on,file=${OVMF_BIN}"
+  add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
   add_qemu_cmdline_opts "-initrd ${INITRD_BIN}"
   add_qemu_cmdline_opts "-kernel ${KERNEL_BIN}"
   add_qemu_cmdline_opts "-append \"${GUEST_KERNEL_APPEND}\""
