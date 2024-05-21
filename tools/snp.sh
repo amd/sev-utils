@@ -702,6 +702,23 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+get_guest_process_status() {
+  local qemu_processes=$(ps aux | grep "${WORKING_DIR}.*qemu.*${IMAGE}" | grep -v "tail.*qemu.log" | grep -v "grep.*qemu")
+  echo "${qemu_processes}"
+}
+
+# Verify guest shutdown status and increase sleep timer for complete guest shutdown
+verify_and_complete_guest_shutdown() {
+    local guest_state=$(get_guest_process_status)
+    local sleep_timer=3
+    while [[  -n "${guest_state}" ]]
+    do
+      sleep $(( $sleep_timer + 1 ))
+      guest_state=$(get_guest_process_status)
+    done
+
+}
+
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
   if [ ! -f "${IMAGE}" ] && ${SKIP_IMAGE_CREATE}; then
@@ -753,7 +770,8 @@ setup_and_launch_guest() {
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # A few seconds for shutdown to complete
-    sleep 10
+    sleep 3
+    verify_and_complete_guest_shutdown
 
     # Call the launch-guest again now that the image is prepped
     setup_and_launch_guest
