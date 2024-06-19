@@ -99,6 +99,7 @@ SNPGUEST_BRANCH="tags/v0.3.2"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
+SEV_SNP_MEASURE_VERSION="0.0.11"
 
 
 
@@ -210,7 +211,7 @@ install_sev_snp_measure() {
   # Install sev-snp-measure
   # pip issue on 20.04 - some openssl bug
   #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
-  pip install sev-snp-measure
+  pip install sev-snp-measure==${SEV_SNP_MEASURE_VERSION}
 }
 
 install_dependencies() {
