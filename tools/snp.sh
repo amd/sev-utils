@@ -164,6 +164,58 @@ verify_snp_host() {
   fi
 }
 
+verify_if_host_is_snp_capable() {
+  # Get the host cpuid eax
+  local host_cpuid_eax=$(cpuid -1 -r -l 0x8000001f | grep -oE "eax=[[:alnum:]]+ " | cut -c5- | tr -d '[:space:]')
+
+  # Bit 0 indicates support for SME status
+  local sme_bit=1
+  local sme_status=$((host_cpuid_eax & sme_bit))
+
+  #  Bit 1 indicates support for SEV 
+  local sev_bit=2
+  local sev_status=$((host_cpuid_eax & sev_bit))
+
+  # Bit 3 indicates support for SEV-ES
+  local sev_es_bit=8
+  local sev_es_status=$((host_cpuid_eax & sev_es_bit))
+
+  # Bit 4 indicates support for SNP
+  local snp_bit=16
+  local snp_status=$((host_cpuid_eax & snp_bit))
+
+  # Map all sev features in a single associative array for all SEV features support in the processor
+  declare -A all_actual_results=(
+    [SME]=${sme_status} 
+    [SEV]=${sev_status}
+    [SEV-ES]=${sev_es_status} 
+    [SNP]=${snp_status}
+  )
+
+  declare -A results_to_match=(
+    [SME]=1 
+    [SEV]=2
+    [SEV-ES]=8
+    [SNP]=16
+    )
+
+  # conditional Check for presence of all security feature support in the processor
+  local hardware_support=1
+  for key in "${!all_actual_results[@]}";
+  do 
+    # echo "$key, value: ${languages[$key]} ${entries[$key]}";
+    if [[ ${all_actual_results[$key]} != ${results_to_match[$key]} ]]; then
+      echo "$key support is not found on the host, processor swap supporting $key feature is required";
+      echo "$key current bit value is: ${all_actual_results[$key]}"
+      hardware_support=0
+    fi
+  done
+
+  if [[ ${hardware_support} == 0 ]]; then
+    return 1
+  fi
+}
+
 install_nasm_from_source() {
   local nasm_dir_name=$(echo "${NASM_SOURCE_TAR_URL}" | sed "s|.*/\(.*\)|\1|g" | sed "s|.tar.gz||g")
   local nasm_dir="${WORKING_DIR}/${nasm_dir_name}"
@@ -848,6 +900,63 @@ verify_snp_guest() {
     || { >&2 echo -e "SNP is NOT Enabled"; return 1; }
 }
 
+verify_guest_snp_bit_status_from_msr() {
+  # Exit if SSH private key does not exist
+  if [ ! -f "${GUEST_SSH_KEY_PATH}" ]; then
+    >&2 echo -e "SSH key not present [${GUEST_SSH_KEY_PATH}], cannot verify guest SNP enabled"
+    return 1
+  fi
+
+  # Install msr-tools for MSR 0xc0010131 (MSR_AMD64_SEV) instruction set and insert module msr on the guest
+  ssh_guest_command "sudo DEBIAN_FRONTEND=noninteractive sudo apt install -y msr-tools > /dev/null 2>&1"
+  ssh_guest_command "sudo modprobe msr"
+
+  # Get the guest (MSR_AMD64_SEV) value
+  local guest_msr_read=$(ssh_guest_command "sudo rdmsr -p 0 0xc0010131")
+  guest_msr_read=$(echo "$guest_msr_read" | tr -d '\r' | bc)
+
+  # Bit 0 indicates support for Guest SEV feature 
+  local sev_bit=1
+  sev_status=$((guest_msr_read & sev_bit))
+ 
+
+  # Bit 1 indicates support for Guest SEV-ES feature 
+  local sev_es_bit=2
+  sev_es_status=$((guest_msr_read & sev_es_bit))
+
+
+  # Bit 2 indicates support for Guest SEV-SNP feature 
+  local snp_bit=4
+  snp_status=$((guest_msr_read & snp_bit))
+
+  # Map all sev features in a single associative array for all guest SEV features
+  declare -A all_actual_results=(
+    [SEV]=${sev_status}
+    [SEV-ES]=${sev_es_status} 
+    [SNP]=${snp_status}
+  )
+
+  declare -A results_to_match=( 
+    [SEV]=1
+    [SEV-ES]=2
+    [SNP]=4
+  )
+
+  # conditional Check for active guest security features
+  local all_active_guest_sev_features=1
+  for key in "${!all_actual_results[@]}";
+  do 
+    if [[ ${all_actual_results[$key]} != ${results_to_match[$key]} ]]; then
+      echo "$key feature is not active on the guest";
+      all_active_guest_sev_features=0
+    fi
+  done
+
+  if [[ ${all_active_guest_sev_features} == 0 ]]; then
+    return 1
+  fi
+}
+
 wait_and_verify_snp_guest() {
   local max_tries=30
   
@@ -1113,6 +1222,7 @@ main() {
       ;;
 
     setup-host)
+      verify_if_host_is_snp_capable
       install_dependencies
 
       if $UPM; then
@@ -1145,6 +1255,7 @@ main() {
 
       setup_and_launch_guest
       wait_and_retry_command verify_snp_guest
+      wait_and_retry_command verify_guest_snp_bit_status_from_msr
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
@@ -1156,6 +1267,7 @@ main() {
       install_sev_snp_measure
       install_dependencies
       wait_and_retry_command verify_snp_guest
+      wait_and_retry_command verify_guest_snp_bit_status_from_msr
       setup_guest_attestation
       attest_guest
       ;;
