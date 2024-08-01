@@ -268,6 +268,9 @@ install_dependencies() {
 
   # pip needed for sev-snp-measure
   sudo apt install -y python3-pip
+
+  # Needed to find information about CPU
+  sudo apt install -y cpuid
   
   echo "true" > "${dependencies_installed_file}"
 }
@@ -923,22 +926,91 @@ setup_guest_attestation() {
   echo "true" > "${guest_setup_file}"
 }
 
-get_cpu_code_name() {
-  local cpu_model=$(cat /proc/cpuinfo | grep "model name" | head -1 | cut -d ' ' -f5)
-  local cpu_code_name="milan"
+# Pass a function and a register to collect its value
+get_cpuid() {
+  local function=$1
+  local register=$2
+  local result
 
-  case "${cpu_model}" in
-    7*)
-      cpu_code_name="milan"
-      echo $cpu_code_name
+  result=$(cpuid -1 -r -l "${function}" | grep -oE "${register}=[[:alnum:]]+ " | cut -c5- | tr -d '[:space:]')
+  
+  if [ -z "${result}" ]; then
+    echo "Failed to find register ${register} for function ${function}"
+  else
+    echo "${result}"
+  fi
+}
+
+# Get the socket type from cpuid
+get_socket_type() {
+  local ebx
+  ebx=$(get_cpuid 0x80000001 ebx)
+
+  local bin_value
+  bin_value=$(echo "obase=2; ibase=16; ${ebx^^}" | bc | rev)
+
+  # Bits 29:31 gives us socket type
+  local socket_bin
+  socket_bin=$(echo "${bin_value}" | cut -c29-32 | rev)
+  
+  echo $((2#${socket_bin}))
+}
+
+# Get the processor model name from the cpuid.
+get_cpu_code_name() {
+  # Read eax register from function 0x80000001
+  local eax
+  eax=$(get_cpuid 0x80000001 eax)
+
+  local bin_value
+  bin_value=$(echo "obase=2; ibase=16; ${eax^^}" | bc | rev)
+
+  # Base family bits [11:8]
+  local base_family
+  base_family=$(echo "ibase=2; $(echo "${bin_value}" | cut -c9-12 | rev)" | bc)
+
+  # Extended family bits [27:20]
+  local extended_family
+  extended_family=$(echo "ibase=2;$(echo "${bin_value}" | cut -c21-28 | rev)" | bc)
+
+  # Base model bits [7:4]
+  local base_model
+  base_model=$(echo "${bin_value}" | cut -c5-8 | rev)
+
+  # Extended model bits [19:16]
+  local extended_model
+  extended_model=$(echo "${bin_value}" | cut -c17-20 | rev)
+
+  # Family = base family + extended family
+  local family
+  family=$((base_family + extended_family))
+
+  # Model = extended_model:base model
+  local model
+  model=$(bc <<< "ibase=2;${extended_model}${base_model}")
+
+  case "${family}" in
+    23)
+      if [ "${model}" -ge 0 ] && [ "$model" -le 15 ]; then
+        echo "naples"
+      elif [ "${model}" -ge 48 ] && [ "$model" -le 63 ]; then
+        echo "rome"
+      fi
       ;;
-    9*)
-      cpu_code_name="genoa"
-      echo $cpu_code_name
+    25)
+      if [ "${model}" -ge 0 ] && [ "${model}" -le 15 ]; then
+        echo "milan"
+      elif [[ "${model}" -ge 16 && "${model}" -le 31 ]] || [[ "${model}" -ge 160 && "${model}" -le 175 ]]; then
+        echo "genoa"
+      fi
+      ;;
+    26)
+      if [ "${model}" -ge 0 ] && [ "${model}" -le 17 ]; then
+        echo "turin"
+      fi
       ;;
     *)
-      >&2 echo -e "Unknown CPU Model: ${cpu_model}"
-      return 1
+      echo "Invalid CPU"
       ;;
   esac
 }
