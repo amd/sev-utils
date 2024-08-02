@@ -198,7 +198,7 @@ install_rust() {
   fi
 
   # Install rust
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain 1.70 -y
   source "${HOME}/.cargo/env" 2>/dev/null
 }
 
