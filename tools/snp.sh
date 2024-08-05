@@ -95,7 +95,7 @@ AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
 AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
 AMDSEV_NON_UPM_BRANCH="snp-non-upm"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
-SNPGUEST_BRANCH="tags/v0.3.2"
+SNPGUEST_BRANCH="tags/v0.7.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
@@ -1000,8 +1000,16 @@ get_cpu_code_name() {
     25)
       if [ "${model}" -ge 0 ] && [ "${model}" -le 15 ]; then
         echo "milan"
-      elif [[ "${model}" -ge 16 && "${model}" -le 31 ]] || [[ "${model}" -ge 160 && "${model}" -le 175 ]]; then
+      elif [ "${model}" -ge 16 ] && [ "${model}" -le 31 ]; then
         echo "genoa"
+      elif [ "${model}" -ge 160 ] && [ "${model}" -le 175 ]; then
+        local socket
+        socket=$(get_socket_type)
+        case "${socket}"  in
+          4) echo "bergamo" ;;
+          8) echo "siena" ;;
+          *) echo "Invalid CPU" ;;
+        esac
       fi
       ;;
     26)
@@ -1074,7 +1082,7 @@ attest_guest() {
   ssh_guest_command "./snpguest display report attestation-report.bin"
 
   # Retrieve ark, ask, vcek (saved in ./certs)
-  ssh_guest_command "./snpguest fetch ca pem ${cpu_code_name} ."
+  ssh_guest_command "./snpguest fetch ca pem ${cpu_code_name} . --endorser vcek"
   ssh_guest_command "./snpguest fetch vcek pem ${cpu_code_name} . attestation-report.bin"
 
   # Verifies that ARK, ASK and VCEK are all properly signed
