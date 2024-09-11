@@ -579,7 +579,7 @@ build_base_qemu_cmdline() {
   add_qemu_cmdline_opts "-smp ${GUEST_SMP}"
   add_qemu_cmdline_opts "-m ${GUEST_MEM_SIZE_MB}M"
   add_qemu_cmdline_opts "-no-reboot"
-  add_qemu_cmdline_opts "-vga std"
+  add_qemu_cmdline_opts "-vga none"
   add_qemu_cmdline_opts "-monitor pty"
   add_qemu_cmdline_opts "-daemonize"
 
@@ -588,7 +588,7 @@ build_base_qemu_cmdline() {
   add_qemu_cmdline_opts "-device virtio-net-pci,disable-legacy=on,iommu_platform=true,netdev=vmnic,romfile="
 
   # Storage
-  add_qemu_cmdline_opts "-device virtio-scsi-pci,id=scsi0,disable-legacy=on,iommu_platform=true"
+  add_qemu_cmdline_opts "-device virtio-scsi-pci,id=scsi0,disable-legacy=on,iommu_platform=true,romfile="
   add_qemu_cmdline_opts "-device scsi-hd,drive=disk0"
   add_qemu_cmdline_opts "-drive if=none,id=disk0,format=qcow2,file=${IMAGE}"
 
