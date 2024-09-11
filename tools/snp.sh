@@ -271,6 +271,9 @@ install_dependencies() {
 
   # Needed to find information about CPU
   sudo apt install -y cpuid
+
+  # Needed to build 6.11.0-rc3 SNP kernel on the host
+  pip install tomli
   
   echo "true" > "${dependencies_installed_file}"
 }
