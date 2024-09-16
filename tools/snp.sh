@@ -173,9 +173,6 @@ install_nasm_from_source() {
     return 0
   fi
 
-  # Remove package manager nasm
-  sudo apt purge nasm
-  
   pushd "${WORKING_DIR}" >/dev/null
 
   # Install from source
