@@ -260,6 +260,47 @@ install_ubuntu_dependencies() {
   pip install tomli
 }
 
+install_rhel_dependencies() {
+  # Build dependencies
+  sudo dnf install -y wget curl
+  sudo dnf install -y git
+
+  # Check if codeready-builder RH repository is enabled for ninja-build qemu dependency
+  if [[ -z $(sudo dnf repolist | grep codeready-builder-for-rhel-9-x86_64-rpms) ]]; then
+      echo "Install and enable codeready-builder RH repository"
+      return 1
+  fi
+
+  # qemu dependencies
+  sudo dnf install -y gcc
+  sudo dnf install -y ninja-build
+  sudo dnf install -y bzip2
+  sudo dnf install -y glib2-devel
+
+  # ovmf dependencies
+  sudo dnf install -y  gcc-c++
+  sudo dnf install -y libuuid-devel
+  sudo dnf install -y iasl
+  install_nasm_from_source
+
+  # kernel dependencies
+  sudo dnf install -y bison
+  sudo dnf install -y flex
+  sudo dnf install -y kernel-devel
+  sudo dnf install -y bc
+  sudo dnf install -y rpm-build
+  sudo dnf install -y dwarves perl
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+
+  # sev-snp-measure
+  sudo dnf install -y python3-pip
+
+  # Needed to build 6.11.0-rc3 SNP kernel on the host
+  pip install tomli
+}
+
 get_linux_distro() {
   local linux_distro
 
@@ -268,6 +309,9 @@ get_linux_distro() {
   case ${ID,,} in
     ubuntu | debian)
       linux_distro='ubuntu'
+      ;;
+    rhel)
+      linux_distro="rhel"
       ;;
     *)
       linux_distro="Unsupported Linux Distribution: ${ID}"
@@ -292,6 +336,10 @@ install_dependencies() {
   case ${linux_distro} in
     ubuntu)
       install_ubuntu_dependencies
+      break
+      ;;
+    rhel)
+      install_rhel_dependencies
       break
       ;;
     *)
