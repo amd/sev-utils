@@ -209,15 +209,7 @@ install_sev_snp_measure() {
   pip install sev-snp-measure==${SEV_SNP_MEASURE_VERSION}
 }
 
-install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  source "${HOME}/.cargo/env" 2>/dev/null || true
-
-  if [ -f "${dependencies_installed_file}" ]; then
-    echo -e "Dependencies previously installed"
-    return 0
-  fi
-
+install_ubuntu_dependencies() {
   # Build dependencies
   sudo apt install -y build-essential git
 
@@ -269,7 +261,48 @@ install_dependencies() {
 
   # Needed to build 6.11.0-rc3 SNP kernel on the host
   pip install tomli
-  
+}
+
+get_linux_distro() {
+  local linux_distro
+
+  [ -e /etc/os-release ] && . /etc/os-release
+
+  case ${ID,,} in
+    ubuntu | debian)
+      linux_distro='ubuntu'
+      ;;
+    *)
+      linux_distro="Unsupported Linux Distribution: ${ID}"
+      ;;
+  esac
+
+  echo "${linux_distro}"
+}
+
+install_dependencies() {
+  local linux_distro=$(get_linux_distro)
+
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+
+  if [ -f "${dependencies_installed_file}" ]; then
+    echo -e "Dependencies previously installed"
+    return 0
+  fi
+
+  # Perform the installation of dependencies specific to the linux distribution
+  case ${linux_distro} in
+    ubuntu)
+      install_ubuntu_dependencies
+      break
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+
   echo "true" > "${dependencies_installed_file}"
 }
 
