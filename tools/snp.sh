@@ -119,7 +119,7 @@ usage() {
   >&2 echo "    stop-guests           Stop all SNP guests started by this script"
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
-  >&2 echo "    -s|--svsm              Build coconut-svsm components, launch guest and verify attestation & measurement"
+  >&2 echo "    -s|--svsm             Build coconut-svsm components, launch guest and verify attestation & measurement"
   >&2 echo "    -i|--image            Path to existing image file"
   >&2 echo "    -h|--help             Usage information"
 
@@ -203,7 +203,7 @@ install_rust() {
 
   # Install rust
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
-  #Beeded to build Cococnut-SVSM
+  # Needed to build Cococnut-SVSM
   if "$SVSM"; then
     rustup target add x86_64-unknown-linux-musl
     cargo install cbindgen
@@ -284,12 +284,11 @@ install_dependencies() {
   # Needed to build 6.11.0-rc3 SNP kernel on the host
   pip install tomli
   
-  #Needed to build Coconut-SVSM
-  if [ "$SVSM" ]; then
+  # Needed to build Coconut-SVSM
+  if $SVSM; then
     sudo apt install -y libcunit1 libcunit1-dev build-essential libclang-dev autoconf \
       autoconf-archive pkg-config automake libssl-dev libc6-dev gcc-multilib binutils make musl musl-tools
   fi
-
   
   echo "true" > "${dependencies_installed_file}"
 }
@@ -823,13 +822,10 @@ setup_and_launch_guest() {
   fi
 
   # ovmf, initrd, kernel and append options
-  if "$SVSM"; then
-    add_qemu_cmdline_opts "-initrd ${INITRD_BIN}"
-    add_qemu_cmdline_opts "-kernel ${KERNEL_BIN}"
-    add_qemu_cmdline_opts "-append \"${GUEST_KERNEL_APPEND}\""
-  else
-    add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
-  fi
+  add_qemu_cmdline_opts "-initrd ${INITRD_BIN}"
+  add_qemu_cmdline_opts "-kernel ${KERNEL_BIN}"
+  add_qemu_cmdline_opts "-append \"${GUEST_KERNEL_APPEND}\""
+  [[ "$SVSM" != true ]] && add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
 
   # Launch qemu cmdline
   "${QEMU_CMDLINE_FILE}"
@@ -1068,7 +1064,7 @@ get_cpu_code_name() {
   esac
 }
 
-generate_snp_expected_measurement() {  
+generate_snp_expected_measurement() {
   # Get ovmf, kernel, initrd paths
   # Get vcpu type and kernel append command line
   local ovmf_path=$(cat "${QEMU_CMDLINE_FILE}" \
@@ -1194,9 +1190,7 @@ generate_svsm_expected_measurement() {
     fi
     # Convert svsm_measurement to lowercase
     svsm_measurement=$(echo "$svsm_measurement" | tr '[:upper:]' '[:lower:]')
-    echo ${svsm_measurement}
 }
-
 
 ###############################################################################
 
@@ -1328,7 +1322,7 @@ main() {
       install_dependencies
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
-      attest_guest  	  
+      attest_guest
       ;;
 
     stop-guests)
