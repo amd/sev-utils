@@ -119,7 +119,7 @@ usage() {
   >&2 echo "    stop-guests           Stop all SNP guests started by this script"
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
-  >&2 echo "    -s|--svsm             Build coconut-svsm components, launch guest and verify attestation & measurement"
+  >&2 echo "    -s|--svsm             Build, launch and attest coconut-svsm"
   >&2 echo "    -i|--image            Path to existing image file"
   >&2 echo "    -h|--help             Usage information"
 
@@ -286,8 +286,8 @@ install_dependencies() {
   
   # Needed to build Coconut-SVSM
   if $SVSM; then
-    sudo apt install -y libcunit1 libcunit1-dev build-essential libclang-dev autoconf \
-      autoconf-archive pkg-config automake libssl-dev libc6-dev gcc-multilib binutils make musl musl-tools
+    sudo apt install -y libcunit1 libcunit1-dev libclang-dev autoconf \
+      autoconf-archive automake libc6-dev gcc-multilib binutils make musl musl-tools
   fi
   
   echo "true" > "${dependencies_installed_file}"

@@ -56,6 +56,10 @@ Setup the host by building SNP patched versions of qemu, ovmf and the linux kern
 ```
 ./snp.sh setup-host
 ```
+Coconut-SVSM: To set up the host by building IGVM, SVSM, QEMU, OVMF, and the Linux kernel, use the following command:
+```
+./snp.sh --svsm setup-host
+```
 
 The `--non-upm` option can be specified with the above command if a non-upm version 
 of the kernel is desired.
@@ -73,6 +77,10 @@ the following command:
 ```
 ./snp.sh launch-guest
 ```
+On the Coconut-SVSM setup, use the following command:
+```
+./snp.sh --svsm launch-guest
+```
 
 This will download a cloud-init ubuntu server jammy image that will be used as the 
 guest disk. The guest is launched by passing qemu direct boot command line options 
@@ -86,6 +94,10 @@ Attest the guest using the following command:
 ```
 ./snp.sh attest-guest
 ```
+On the Coconut-SVSM setup, use the following command:
+```
+./snp.sh --svsm attest-guest
+```
 
 The above result will show the contents of the SNP report and perform the 
 report signature and certificate CA verification. It uses the IBM 
@@ -95,6 +107,8 @@ parameters, and additional qemu command line parameters. This expected measureme
 is then checked and verified against the launch measurement that is output from the 
 [virtee/snpguest](https://github.com/virtee/snpguest) tool. If the two measurements 
 match, then the test returns with a successful output.
+
+Note: On the Coconut-SVSM setup, the igvmmeasure tool (part of the SVSM build) is used to calculate the expected launch measurement.
 
 ## Stopping all Guests
 
