@@ -74,6 +74,7 @@ ATTESTATION_WORKING_DIR="${ATTESTATION_WORKING_DIR:-${WORKING_DIR}/attest}"
 # Export environment variables
 COMMAND="help"
 UPM=true
+SVSM=false
 SKIP_IMAGE_CREATE=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
 GUEST_NAME="${GUEST_NAME:-snp-guest}"
@@ -94,6 +95,8 @@ GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 AMDSEV_URL="https://github.com/ryansavino/AMDSEV.git"
 AMDSEV_DEFAULT_BRANCH="snp-latest-fixes"
 AMDSEV_NON_UPM_BRANCH="snp-non-upm"
+AMDSEV_SVSM_URL="https://github.com/ramagali24/AMDSEV-SVSM.git"
+AMDSEV_SVSM_BRANCH="svsm-latest-fixes"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.7.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
@@ -116,6 +119,7 @@ usage() {
   >&2 echo "    stop-guests           Stop all SNP guests started by this script"
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
+  >&2 echo "    -s|--svsm             Build, launch and attest coconut-svsm"
   >&2 echo "    -i|--image            Path to existing image file"
   >&2 echo "    -h|--help             Usage information"
 
@@ -199,6 +203,11 @@ install_rust() {
 
   # Install rust
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -sSf | sh -s -- -y
+  # Needed to build Cococnut-SVSM
+  if "$SVSM"; then
+    rustup target add x86_64-unknown-linux-musl
+    cargo install cbindgen
+  fi
   source "${HOME}/.cargo/env" 2>/dev/null
 }
 
@@ -274,6 +283,12 @@ install_dependencies() {
 
   # Needed to build 6.11.0-rc3 SNP kernel on the host
   pip install tomli
+  
+  # Needed to build Coconut-SVSM
+  if $SVSM; then
+    sudo apt install -y libcunit1 libcunit1-dev libclang-dev autoconf \
+      autoconf-archive automake libc6-dev gcc-multilib binutils make musl musl-tools
+  fi
   
   echo "true" > "${dependencies_installed_file}"
 }
@@ -524,10 +539,14 @@ save_binary_paths() {
 # Save binary paths in source file
 cat > "${SETUP_WORKING_DIR}/source-bins" <<EOF
 QEMU_BIN="${SETUP_WORKING_DIR}/AMDSEV/qemu/build/qemu-system-x86_64"
-OVMF_BIN="${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/AmdSev/DEBUG_GCC5/FV/OVMF.fd"
 INITRD_BIN="${GENERATED_INITRD_BIN}"
 KERNEL_BIN="${guest_kernel}"
 EOF
+  if "$SVSM"; then
+    echo "IGVM_FILE=\"${SETUP_WORKING_DIR}/AMDSEV/svsm/bin/coconut-qemu.igvm\"" >> "${SETUP_WORKING_DIR}/source-bins"
+  else
+    echo "OVMF_BIN=\"${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/AmdSev/DEBUG_GCC5/FV/OVMF.fd\"" >> "${SETUP_WORKING_DIR}/source-bins"
+  fi
 }
 
 copy_launch_binaries() {
@@ -545,16 +564,24 @@ copy_launch_binaries() {
 
   # Copy the setup generated bins to the guest launch directory
   # initrd is copied after the first guest boot and is scp-ed off
-  cp "${OVMF_BIN}" "${LAUNCH_WORKING_DIR}"
+  if "$SVSM"; then
+    cp "${IGVM_FILE}" "${LAUNCH_WORKING_DIR}"
+  else
+    cp "${OVMF_BIN}" "${LAUNCH_WORKING_DIR}"
+  fi
   #cp "${INITRD_BIN}" "${LAUNCH_WORKING_DIR}"
   cp "${KERNEL_BIN}" "${LAUNCH_WORKING_DIR}"
 
 # Save binary paths in source file
 cat > "${LAUNCH_WORKING_DIR}/source-bins" <<EOF
-OVMF_BIN="${LAUNCH_WORKING_DIR}/$(basename "${OVMF_BIN}")"
 INITRD_BIN="${LAUNCH_WORKING_DIR}/$(basename "${INITRD_BIN}")"
 KERNEL_BIN="${LAUNCH_WORKING_DIR}/$(basename "${KERNEL_BIN}")"
 EOF
+  if "$SVSM"; then
+    echo "IGVM_FILE=\"${LAUNCH_WORKING_DIR}/$(basename "${IGVM_FILE}")\"" >> "${LAUNCH_WORKING_DIR}/source-bins"
+  else
+    echo "OVMF_BIN=\"${LAUNCH_WORKING_DIR}/$(basename "${OVMF_BIN}")\"" >> "${LAUNCH_WORKING_DIR}/source-bins"
+  fi
 }
 
 add_qemu_cmdline_opts() {
@@ -646,22 +673,23 @@ set_acl_for_sev_device() {
   echo "${setfacl_command}" | sudo tee -a "${rc_local_file}" >/dev/null
 }
 
-build_and_install_amdsev() {
+build_and_install_amdsev() {  
+  
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
-
+  local amdsev_url="${2:-${AMDSEV_URL}}"  # Accept the URL as the second argument    
   # Create directory
   mkdir -p "${SETUP_WORKING_DIR}"
   
   # Clone and switch branch
   pushd "${SETUP_WORKING_DIR}" >/dev/null
   if [ ! -d "AMDSEV" ]; then
-    git clone -b "${amdsev_branch}" "${AMDSEV_URL}" "AMDSEV"
-    git -C "AMDSEV" remote add current "${AMDSEV_URL}"
+    git clone -b "${amdsev_branch}" "${amdsev_url}" "AMDSEV"
+    git -C "AMDSEV" remote add current "${amdsev_url}"
   fi
 
   # Fetch, checkout, update
   cd "AMDSEV"
-  git remote set-url current "${AMDSEV_URL}"
+  git remote set-url current "${amdsev_url}"
   git fetch current "${amdsev_branch}"
   git checkout "current/${amdsev_branch}"
 
@@ -786,13 +814,18 @@ setup_and_launch_guest() {
   #add_qemu_cmdline_opts "-machine pc-q35-7.1"
 
   # snp object and kernel-hashes on
-  add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on"
+  if "$SVSM"; then
+     add_qemu_cmdline_opts "-object memory-backend-memfd,size=2G,id=mem0,share=true,prealloc=false,reserve=off"
+     add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,init-flags=5,igvm-file="$IGVM_FILE""
+  else
+     add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on"  
+  fi
 
   # ovmf, initrd, kernel and append options
-  add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
   add_qemu_cmdline_opts "-initrd ${INITRD_BIN}"
   add_qemu_cmdline_opts "-kernel ${KERNEL_BIN}"
   add_qemu_cmdline_opts "-append \"${GUEST_KERNEL_APPEND}\""
+  [[ "$SVSM" != true ]] && add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
 
   # Launch qemu cmdline
   "${QEMU_CMDLINE_FILE}"
@@ -910,9 +943,14 @@ setup_guest_attestation() {
   else
     git checkout "current/${SNPGUEST_BRANCH}"
   fi
-
-  cargo build -r
-  scp_guest_command target/release/snpguest "${GUEST_USER}@localhost:/home/${GUEST_USER}"
+  
+  if "$SVSM"; then
+    cargo build --release --target x86_64-unknown-linux-musl
+    scp_guest_command target/x86_64-unknown-linux-musl/release/snpguest "${GUEST_USER}@localhost:/home/${GUEST_USER}"
+  else
+    cargo build -r
+    scp_guest_command target/release/snpguest "${GUEST_USER}@localhost:/home/${GUEST_USER}"
+  fi
   popd
 
   # Update, upgrade and packages
@@ -1073,49 +1111,86 @@ generate_snp_expected_measurement() {
     { >&2 echo -e "sev-snp-measure return value is empty"; return 1; }
   echo ${measurement}
 }
-
 attest_guest() {
-  local cpu_code_name=$(get_cpu_code_name)
+    local cpu_code_name=$(get_cpu_code_name)
+    vmpl_flag=""
+    if "$SVSM"; then
+      vmpl_flag="--vmpl 3"
+    fi
+    # Install the sev-guest module
+    ssh_guest_command "sudo insmod /lib/modules/*/kernel/drivers/virt/coco/sev-guest/sev-guest.ko >/dev/null 2>&1 || true"
 
-  # Install the sev-guest module
-  ssh_guest_command "sudo insmod /lib/modules/*/kernel/drivers/virt/coco/sev-guest/sev-guest.ko >/dev/null 2>&1 || true"
+    # Request and display the snp attestation report with random data
+    ssh_guest_command "sudo ./snpguest report attestation-report.bin request-data.txt --random $vmpl_flag"    
+    ssh_guest_command "./snpguest display report attestation-report.bin"
 
-  # Request and display the snp attestation report with random data
-  ssh_guest_command "sudo ./snpguest report attestation-report.bin request-data.txt --random"
-  ssh_guest_command "./snpguest display report attestation-report.bin"
+    # Retrieve ark, ask, vcek (saved in ./certs)
+    ssh_guest_command "./snpguest fetch ca pem ${cpu_code_name} ."
+    ssh_guest_command "./snpguest fetch vcek pem ${cpu_code_name} . attestation-report.bin"
 
-  # Retrieve ark, ask, vcek (saved in ./certs)
-  ssh_guest_command "./snpguest fetch ca pem ${cpu_code_name} . --endorser vcek"
-  ssh_guest_command "./snpguest fetch vcek pem ${cpu_code_name} . attestation-report.bin"
+    # Verifies that ARK, ASK and VCEK are all properly signed
+    ssh_guest_command "./snpguest verify certs ."
 
-  # Verifies that ARK, ASK and VCEK are all properly signed
-  ssh_guest_command "./snpguest verify certs ."
+    # Verifies the attestation-report trusted compute base matches vcek
+    ssh_guest_command "./snpguest verify attestation . attestation-report.bin"
 
-  # Verifies the attestation-report trusted compute base matches vcek
-  ssh_guest_command "./snpguest verify attestation . attestation-report.bin"
+    # Use appropriate measurement function based on SVSM
+    if  "$SVSM"; then
+      local expected_measurement=$(generate_svsm_expected_measurement)
+      echo -e "\nExpected Measurement (igvmmeasure): ${expected_measurement}"
+    else
+      local expected_measurement=$(generate_snp_expected_measurement)
+      echo -e "\nExpected Measurement (sev-snp-measure): ${expected_measurement}"
+    fi
 
-  # Use sev-snp-measure utility to calculate the expected measurement
-  local expected_measurement=$(generate_snp_expected_measurement)
-  echo -e "\nExpected Measurement (sev-snp-measure):  ${expected_measurement}"
+    # Parse the measurement out of the snp report
+    local snpguest_report_measurement=$(ssh_guest_command \
+        "./snpguest display report attestation-report.bin | \
+        tr '\n' ' ' | \
+        sed 's|.*Measurement:\(.*\)Host Data.*|\1|g' | \
+        sed 's| ||g'")
 
-  # Parse the measurement out of the snp report
-  local snpguest_report_measurement=$(ssh_guest_command \
-    "./snpguest display report attestation-report.bin \
-    | tr '\n' ' ' \
-    | sed \"s|.*Measurement:\(.*\)Host Data.*|\1\n|g\" \
-    | sed \"s| ||g\"")
+    # Remove any special characters and print the value
+    snpguest_report_measurement=$(echo "$snpguest_report_measurement" | sed 's/[^[:print:]\t]//g')
+    echo -e "Measurement from SNP Attestation Report: ${snpguest_report_measurement}\n"
 
-  # Remove any special characters and print the value
-  snpguest_report_measurement=$(echo ${snpguest_report_measurement} | sed $'s/[^[:print:]\t]//g')
-  echo -e "Measurement from SNP Attestation Report: ${snpguest_report_measurement}\n"
-
-  # Compare the expected measurement to the guest report measurement
-  [[ "${expected_measurement}" == "${snpguest_report_measurement}" ]] \
-    && echo -e "The expected measurement matches the snp guest report measurement!" \
-    || { >&2 echo -e "FAIL: measurements do not match"; return 1; }
+    # Compare the expected measurement to the guest report measurement
+    if [ "${expected_measurement}" = "${snpguest_report_measurement}" ]; then
+      echo -e "The expected measurement matches the snp guest report measurement!"
+    else
+      >&2 echo -e "FAIL: measurements do not match"
+      return 1
+    fi
 }
 
+generate_svsm_expected_measurement() {
+    # Change directory to where igvmmeasure is located
+    if ! cd "$SETUP_WORKING_DIR/AMDSEV/svsm/target/x86_64-unknown-linux-gnu/debug"; then
+      echo 'Failed to change directory'
+      exit 1
+    fi
 
+    # Run the igvmmeasure command and capture its output
+    local output
+    if ! output=$(./igvmmeasure --check-kvm "$SETUP_WORKING_DIR/AMDSEV/svsm/bin/coconut-qemu.igvm" measure 2>&1); then
+      echo 'Failed to run igvmmeasure'
+      echo "Output: $output"
+      exit 1
+    fi
+
+    # Extract the Launch Digest from the output
+    local svsm_measurement
+    svsm_measurement=$(echo "$output" | awk '/Launch Digest:/ {print $3}')
+
+    # Check if measurement was extracted
+    if [ -z "$svsm_measurement" ]; then
+      echo 'Failed to extract measurement'
+      echo "Output: $output"
+      exit 1
+    fi
+    # Convert svsm_measurement to lowercase
+    svsm_measurement=$(echo "$svsm_measurement" | tr '[:upper:]' '[:lower:]')
+}
 
 ###############################################################################
 
@@ -1147,6 +1222,10 @@ main() {
         IMAGE="${2}"
         SKIP_IMAGE_CREATE=true
         shift; shift
+        ;;
+      -s|--svsm)
+        SVSM=true
+        shift
         ;;
 
       setup-host)
@@ -1182,7 +1261,7 @@ main() {
         ;;
     esac
   done
-  
+
   # Set SETUP_WORKING_DIR for non-upm
   if ! $UPM; then
     SETUP_WORKING_DIR="${SETUP_WORKING_DIR}/non-upm"
@@ -1198,10 +1277,13 @@ main() {
     setup-host)
       install_dependencies
 
-      if $UPM; then
-        build_and_install_amdsev "${AMDSEV_DEFAULT_BRANCH}"
+      if $SVSM; then
+        # Run when SVSM is true
+        build_and_install_amdsev "${AMDSEV_SVSM_BRANCH}" "${AMDSEV_SVSM_URL}"
+      elif $UPM; then
+        build_and_install_amdsev "${AMDSEV_DEFAULT_BRANCH}" "${AMDSEV_URL}"
       else
-        build_and_install_amdsev "${AMDSEV_NON_UPM_BRANCH}"
+        build_and_install_amdsev "${AMDSEV_NON_UPM_BRANCH}" "${AMDSEV_URL}"
       fi
 
       source "${SETUP_WORKING_DIR}/source-bins"
