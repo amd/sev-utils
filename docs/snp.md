@@ -56,10 +56,9 @@ Setup the host by building SNP patched versions of qemu, ovmf and the linux kern
 ```
 ./snp.sh setup-host
 ```
-Coconut-SVSM: To set up the host by building IGVM, SVSM, QEMU, OVMF, and the Linux kernel, use the following command:
-```
-./snp.sh --svsm setup-host
-```
+
+The `--svsm` option can be specified with the above command to set-up the host for SVSM. 
+This will build a Coconut-SVSM kernel as well as the IGVM, SVSM, OVMF and QEMU launch dependencies.
 
 The `--non-upm` option can be specified with the above command if a non-upm version 
 of the kernel is desired.
@@ -77,10 +76,9 @@ the following command:
 ```
 ./snp.sh launch-guest
 ```
-On the Coconut-SVSM setup, use the following command:
-```
-./snp.sh --svsm launch-guest
-```
+
+The `--svsm` option can be specified in the above command to launch a Coconut-SVSM guest. 
+The `setup-host` command must be run with this same option in order to have the necessary dependencies to launch an SVSM guest.
 
 This will download a cloud-init ubuntu server jammy image that will be used as the 
 guest disk. The guest is launched by passing qemu direct boot command line options 
@@ -94,10 +92,8 @@ Attest the guest using the following command:
 ```
 ./snp.sh attest-guest
 ```
-On the Coconut-SVSM setup, use the following command:
-```
-./snp.sh --svsm attest-guest
-```
+
+Use the `--svsm` option in the above command to attest a Coconut-SVSM guest.
 
 The above result will show the contents of the SNP report and perform the 
 report signature and certificate CA verification. It uses the IBM 
