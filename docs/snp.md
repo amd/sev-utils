@@ -108,7 +108,8 @@ is then checked and verified against the launch measurement that is output from 
 [virtee/snpguest](https://github.com/virtee/snpguest) tool. If the two measurements 
 match, then the test returns with a successful output.
 
-Note: On the Coconut-SVSM setup, the igvmmeasure tool (part of the SVSM build) is used to calculate the expected launch measurement.
+In the case of Coconut-SVSM attestation, the [igvmmeasure](https://github.com/coconut-svsm/svsm/tree/main/igvmmeasure)
+tool is used, which will only measure the IGVM file used to launch the guest. This expected measurement should match with the measurement on the attestation report of the SVSM guest.
 
 ## Stopping all Guests
 
