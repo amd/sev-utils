@@ -91,8 +91,8 @@ IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
-AMDSEV_URL="https://github.com/confidential-containers/amdese-amdsev.git"
-AMDSEV_DEFAULT_BRANCH="amd-snp-202402240000"
+AMDSEV_URL="https://github.com/LakshmiSaiHarika/AMDSEV.git"
+AMDSEV_DEFAULT_BRANCH="rhel-amd-snp-202402240000"
 AMDSEV_NON_UPM_BRANCH="amd-snp-202306070000"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.7.1"
@@ -173,9 +173,6 @@ install_nasm_from_source() {
     return 0
   fi
 
-  # Remove package manager nasm
-  sudo apt purge nasm
-  
   pushd "${WORKING_DIR}" >/dev/null
 
   # Install from source
@@ -209,15 +206,7 @@ install_sev_snp_measure() {
   pip install sev-snp-measure==${SEV_SNP_MEASURE_VERSION}
 }
 
-install_dependencies() {
-  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
-  source "${HOME}/.cargo/env" 2>/dev/null || true
-
-  if [ -f "${dependencies_installed_file}" ]; then
-    echo -e "Dependencies previously installed"
-    return 0
-  fi
-
+install_ubuntu_dependencies() {
   # Build dependencies
   sudo apt install -y build-essential git
 
@@ -269,7 +258,96 @@ install_dependencies() {
 
   # Needed to build 6.11.0-rc3 SNP kernel on the host
   pip install tomli
-  
+}
+
+install_rhel_dependencies() {
+  # Build dependencies
+  sudo dnf install -y wget curl
+  sudo dnf install -y git
+
+  # Check if codeready-builder RH repository is enabled for ninja-build qemu dependency
+  if [[ -z $(sudo dnf repolist | grep codeready-builder-for-rhel-9-x86_64-rpms) ]]; then
+      echo "Install and enable codeready-builder RH repository"
+      return 1
+  fi
+
+  # qemu dependencies
+  sudo dnf install -y gcc
+  sudo dnf install -y ninja-build
+  sudo dnf install -y bzip2
+  sudo dnf install -y glib2-devel
+
+  # ovmf dependencies
+  sudo dnf install -y  gcc-c++
+  sudo dnf install -y libuuid-devel
+  sudo dnf install -y iasl
+  install_nasm_from_source
+
+  # kernel dependencies
+  sudo dnf install -y bison
+  sudo dnf install -y flex
+  sudo dnf install -y kernel-devel
+  sudo dnf install -y bc
+  sudo dnf install -y rpm-build
+  sudo dnf install -y dwarves perl
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+
+  # sev-snp-measure
+  sudo dnf install -y python3-pip
+
+  # Needed to build 6.11.0-rc3 SNP kernel on the host
+  pip install tomli
+}
+
+get_linux_distro() {
+  local linux_distro
+
+  [ -e /etc/os-release ] && . /etc/os-release
+
+  case ${ID,,} in
+    ubuntu | debian)
+      linux_distro='ubuntu'
+      ;;
+    rhel)
+      linux_distro="rhel"
+      ;;
+    *)
+      linux_distro="Unsupported Linux Distribution: ${ID}"
+      ;;
+  esac
+
+  echo "${linux_distro}"
+}
+
+install_dependencies() {
+  local linux_distro=$(get_linux_distro)
+
+  local dependencies_installed_file="${WORKING_DIR}/dependencies_already_installed"
+  source "${HOME}/.cargo/env" 2>/dev/null || true
+
+  if [ -f "${dependencies_installed_file}" ]; then
+    echo -e "Dependencies previously installed"
+    return 0
+  fi
+
+  # Perform the installation of dependencies specific to the linux distribution
+  case ${linux_distro} in
+    ubuntu)
+      install_ubuntu_dependencies
+      break
+      ;;
+    rhel)
+      install_rhel_dependencies
+      break
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+
   echo "true" > "${dependencies_installed_file}"
 }
 
@@ -282,7 +360,7 @@ get_host_kernel_version() {
   echo "${host_kernel}"
 }
 
-set_grub_default_snp() {
+set_ubuntu_grub_default_snp() {
   # Get the path to host kernel and the version for setting grub default
   local host_kernel_version=$(get_host_kernel_version)
 
@@ -312,6 +390,45 @@ set_grub_default_snp() {
   sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"${snp_submenu_name}>${snp_menuitem_name}\"|g" "/etc/default/grub"
   
   sudo update-grub
+}
+
+set_rhel_grub_default_snp() {
+  # Get the SNP host latest version from snp host kernel config
+  local snp_host_kernel_version=$(get_host_kernel_version)
+
+  # Retrieve snp menuitem name from grub.cfg
+  local snp_menuitem_name=$(sudo cat /boot/grub2/grub.cfg \
+    | grep "menuentry.*${snp_host_kernel_version}" \
+    | grep -v "(recovery mode)" \
+    | grep -o -P "(?<=').*" \
+    | grep -o -P "^[^']*")
+
+  # Create default grub backup
+  sudo cp /etc/default/grub /etc/default/grub_bkup
+
+  # Replace grub default with snp menuitem name
+  sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"${snp_menuitem_name}\"|g" "/etc/default/grub"
+
+  # Regenerate GRUB configuration for UEFI based machine or BIOS based machine
+  [ -d /sys/firmware/efi ] && sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg || sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+}
+
+set_grub_default_snp() {
+  local linux_distro=$(get_linux_distro)
+
+  # Set the host default GRUB Menu to boot into built SNP kernel based on specific linux distro
+  case ${linux_distro} in
+    ubuntu)
+      set_ubuntu_grub_default_snp
+      ;;
+    rhel)
+      set_rhel_grub_default_snp
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
 }
 
 generate_guest_ssh_keypair() {
