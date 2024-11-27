@@ -301,6 +301,36 @@ install_rhel_dependencies() {
   pip install tomli
 }
 
+install_fedora_dependencies() {
+  # Build dependencies
+  sudo dnf install -y git make
+
+  # ACL for setting access to /dev/sev
+  sudo dnf install -y acl
+
+  # qemu dependencies
+  sudo dnf install -y ninja-build
+  sudo dnf install -y gcc
+  sudo dnf install -y glib2 glib2-devel
+  sudo dnf install -y pixman pixman-devel
+  sudo dnf install -y meson
+  sudo dnf install -y libslirp-devel
+  sudo dnf install -y libuuid libuuid-devel
+  sudo dnf install -y python
+
+  # ovmf dependencies
+  install_nasm_from_source
+  sudo dnf install -y acpica-tools zstd rpm-build dwarves perl
+
+  # kernel dependencies
+  sudo dnf install -y flex bison
+  sudo dnf install -y openssl-devel
+  sudo dnf install -y elfutils-libelf-devel # to resovle gelf.h: No such file or directory issue
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+}
+
 get_linux_distro() {
   local linux_distro
 
@@ -312,6 +342,9 @@ get_linux_distro() {
       ;;
     rhel)
       linux_distro="rhel"
+      ;;
+    fedora)
+      linux_distro="fedora"
       ;;
     *)
       linux_distro="Unsupported Linux Distribution: ${ID}"
@@ -340,6 +373,10 @@ install_dependencies() {
       ;;
     rhel)
       install_rhel_dependencies
+      break
+      ;;
+    fedora)
+      install_fedora_dependencies
       break
       ;;
     *)
