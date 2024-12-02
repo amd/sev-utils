@@ -87,6 +87,7 @@ GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-ke
 GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
+BASE_CLOUD_IMAGE="${BASE_CLOUD_IMAGE:-${WORKING_DIR}/base_cloud_image.img}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
@@ -540,7 +541,11 @@ EOF
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
 
   # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  if [ ! -f "${BASE_CLOUD_IMAGE}" ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O "${BASE_CLOUD_IMAGE}"
+  fi
+
+  cp -v "${BASE_CLOUD_IMAGE}" "${IMAGE}"
 }
 
 resize_guest() {
