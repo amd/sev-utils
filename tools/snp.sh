@@ -1413,7 +1413,7 @@ main() {
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
-      echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
+      echo -e "ssh -p ${HOST_SSH_PORT} -i ${GUEST_SSH_KEY_PATH} ${GUEST_USER}@localhost"
       ;;
 
     attest-guest)
