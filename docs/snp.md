@@ -14,6 +14,7 @@ Tested on the following OS distributions:
 - Ubuntu 20.04
 - Ubuntu 22.04
 - RHEL 9.4
+- Fedora 38
 
 Image formats supported:
 - qcow2

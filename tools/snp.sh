@@ -301,6 +301,36 @@ install_rhel_dependencies() {
   pip install tomli
 }
 
+install_fedora_dependencies() {
+  # Build dependencies
+  sudo dnf install -y git make
+
+  # ACL for setting access to /dev/sev
+  sudo dnf install -y acl
+
+  # qemu dependencies
+  sudo dnf install -y ninja-build
+  sudo dnf install -y gcc
+  sudo dnf install -y glib2 glib2-devel
+  sudo dnf install -y pixman pixman-devel
+  sudo dnf install -y meson
+  sudo dnf install -y libslirp-devel
+  sudo dnf install -y libuuid libuuid-devel
+  sudo dnf install -y python
+
+  # ovmf dependencies
+  install_nasm_from_source
+  sudo dnf install -y acpica-tools zstd rpm-build dwarves perl
+
+  # kernel dependencies
+  sudo dnf install -y flex bison
+  sudo dnf install -y openssl-devel
+  sudo dnf install -y elfutils-libelf-devel # to resovle gelf.h: No such file or directory issue
+
+  # cloud-utils dependency
+  sudo dnf install -y cloud-init
+}
+
 get_linux_distro() {
   local linux_distro
 
@@ -312,6 +342,9 @@ get_linux_distro() {
       ;;
     rhel)
       linux_distro="rhel"
+      ;;
+    fedora)
+      linux_distro="fedora"
       ;;
     *)
       linux_distro="Unsupported Linux Distribution: ${ID}"
@@ -340,6 +373,10 @@ install_dependencies() {
       ;;
     rhel)
       install_rhel_dependencies
+      break
+      ;;
+    fedora)
+      install_fedora_dependencies
       break
       ;;
     *)
@@ -413,6 +450,24 @@ set_rhel_grub_default_snp() {
   [ -d /sys/firmware/efi ] && sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg || sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 }
 
+set_fedora_grub_default_snp(){
+  # Get the SNP host latest version from snp host kernel config
+  local snp_host_kernel_version=$(get_host_kernel_version)
+
+  # Retrieve snp menuitem name from the boot loader entries
+  local snp_menuitem_name=$(sudo sh -c 'grep title /boot/loader/entries/* | cut -d " " -f2-' \
+  | grep "Fedora Linux.*${snp_host_kernel_version}")
+
+  # Create default grub backup
+  sudo cp /etc/default/grub /etc/default/grub_bkup
+
+  # Replace grub default with snp menuitem name
+  sudo sed -i -e "s|^\(GRUB_DEFAULT=\).*$|\1\"${snp_menuitem_name}\"|g" "/etc/default/grub"
+
+  # Regenerate GRUB configuration for fedora UEFI based machine or BIOS based machine
+  [ -d /sys/firmware/efi ] && sudo grub2-mkconfig -o /boot/efi/EFI/fedora/grub.cfg || sudo grub2-mkconfig -o /boot/grub2/grub.cfg
+}
+
 set_grub_default_snp() {
   local linux_distro=$(get_linux_distro)
 
@@ -423,6 +478,9 @@ set_grub_default_snp() {
       ;;
     rhel)
       set_rhel_grub_default_snp
+      ;;
+    fedora)
+      set_fedora_grub_default_snp
       ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
