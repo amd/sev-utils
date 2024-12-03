@@ -244,6 +244,7 @@ install_ubuntu_dependencies() {
 
   # cloud-utils dependency
   sudo apt install -y cloud-image-utils
+  sudo apt install -y genisoimage
 
   # Virtualization tools for resizing image
   # virt-resize currently does not work with cloud-init images. It changes the partition 
@@ -502,6 +503,23 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+download_guest_os_image(){
+  local linux_distro=$(get_linux_distro)
+
+  # Set the guest OS image-cloud init URL based on the Host OS type
+  case ${linux_distro} in
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+      ;;
+  esac
+
+  # Download the guest os-image and change name
+  if [ ! -f "${BASE_CLOUD_IMAGE}" ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O "${BASE_CLOUD_IMAGE}"
+  fi
+  cp -v "${BASE_CLOUD_IMAGE}" "${IMAGE}"
+}
+
 cloud_init_create_data() {
   if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml" && \
     -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml"  && \
@@ -535,17 +553,11 @@ users:
       - ${pub_key}
 EOF
 
-  # Create the seed image with metadata and user data
-  cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml"
+  # Create the seed image with metadata and user data using genisoimage utility
+  genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml"
 
-  # Download ubuntu 20.04 and change name
-  if [ ! -f "${BASE_CLOUD_IMAGE}" ]; then
-    wget "${CLOUD_INIT_IMAGE_URL}" -O "${BASE_CLOUD_IMAGE}"
-  fi
-
-  cp -v "${BASE_CLOUD_IMAGE}" "${IMAGE}"
+  # Download Guest Image from cloud init URL
+  download_guest_os_image
 }
 
 resize_guest() {
@@ -916,7 +928,7 @@ setup_and_launch_guest() {
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
-    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/ciiso.iso"
   fi
 
   local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
