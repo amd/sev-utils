@@ -84,7 +84,7 @@ CPU_MODEL="${CPU_MODEL:-EPYC-v4}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
 GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key}"
-GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
+GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-""}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 BASE_CLOUD_IMAGE="${BASE_CLOUD_IMAGE:-${WORKING_DIR}/base_cloud_image.img}"
@@ -899,6 +899,53 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+get_package_install_command(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      echo "dpkg -i"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+get_guest_kernel_package(){
+  local linux_distro=$(get_linux_distro)
+  local guest_kernel_version=$(get_guest_kernel_version)
+
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
+    case ${linux_distro} in
+      ubuntu)
+          echo $(realpath linux-image*${guest_kernel_version}*.deb| grep -v dbg)
+          ;;
+      *)
+        >&2 echo -e "ERROR: ${linux_distro}"
+        return 1
+        ;;
+    esac
+  popd>/dev/null
+}
+
+set_default_guest_kernel_append() {
+  local linux_distro=$(get_linux_distro)
+
+  # Sets default kernel append based on the linux distro
+  case ${linux_distro} in
+    ubuntu)
+      GUEST_ROOT_LABEL="cloudimg-rootfs"
+      GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
   if [ ! -f "${IMAGE}" ] && ${SKIP_IMAGE_CREATE}; then
@@ -938,16 +985,43 @@ setup_and_launch_guest() {
 
     # Install the guest kernel, retrieve the initrd and then reboot
     local guest_kernel_version=$(get_guest_kernel_version)
-    local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
-    local guest_initrd_basename="initrd.img-${guest_kernel_version}"
-    wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+    local guest_kernel_package=$(get_guest_kernel_package)
+
+    local guest_initrd_basename="init*${guest_kernel_version}*"
+    local guest_kernel_basename="vmlinuz*${guest_kernel_version}*"
+
+    # Uses package manager command based on the guest OS linux distro
+    local package_install_command=$(get_package_install_command)
+
+    # Copy the built SNP guest kernel package into the guest
+    wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
+
+    # Install the guest SNP kernel package inside the guest
+    ssh_guest_command "sudo ${package_install_command} /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
+
+    # Copy the installed guest initial ram disk into the host
+    local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
+    initrd_filepath=$(echo ${initrd_filepath}| tr -d '\r')
+    ssh_guest_command "sudo cp $(realpath ${initrd_filepath}) /home/${GUEST_USER}"
+    ssh_guest_command "sudo chmod 644 /home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))"
+    scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
+
+    # Copy the installed SNP guest kernel from guest into the host
+    local vmlinuz_filepath=$(ssh_guest_command "ls /boot/${guest_kernel_basename}")
+    vmlinuz_filepath=$(echo ${vmlinuz_filepath}| tr -d '\r')
+    ssh_guest_command "sudo cp  $(realpath ${vmlinuz_filepath}) /home/${GUEST_USER}"
+    ssh_guest_command "sudo chmod 644  /home/${GUEST_USER}/$(basename $(realpath ${vmlinuz_filepath}))"
+    scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${vmlinuz_filepath}))" "${LAUNCH_WORKING_DIR}"
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
-    # Update the initrd file path and name in the guest launch source-bins file
-    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    # Update guest initrd, kernel binary file path in the host
+    GENERATED_INITRD_BIN=$(ls ${LAUNCH_WORKING_DIR}/${guest_initrd_basename} )
+    GENERATED_KERNEL_BIN=$(ls ${LAUNCH_WORKING_DIR}/${guest_kernel_basename}* )
+
+    # Update the source bin file with the latest initrd & kernel file path
+    sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${GENERATED_INITRD_BIN}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    sed -i -e "s|^\(KERNEL_BIN=\).*$|\1\"${GENERATED_KERNEL_BIN}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
 
     # Wait for shutdown to complete
     wait_and_retry_command "! ps aux | grep \"${WORKING_DIR}.*qemu.*${IMAGE}\" | grep -v \"tail.*qemu.log\" | grep -v \"grep.*qemu\""
@@ -977,6 +1051,12 @@ setup_and_launch_guest() {
 
   # snp object and kernel-hashes on
   add_qemu_cmdline_opts "-object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on"
+
+  # Update guest initrd, kernel to the updated guest SNP kernel version
+  source "${LAUNCH_WORKING_DIR}/source-bins"
+
+  # Set the default guest kernel append parameter based on the linux distro
+  [ -z "${GUEST_ROOT_LABEL}" ] && set_default_guest_kernel_append
 
   # ovmf, initrd, kernel and append options
   add_qemu_cmdline_opts "-bios ${OVMF_BIN}"
