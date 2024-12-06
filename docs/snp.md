@@ -132,6 +132,12 @@ Launch the guest:
 ./snp.sh launch-guest
 ```
 
+User can launch various unique SNP enabled guests at the same time using
+ different GUEST_NAME and HOST_SSH_PORT environment variables. Export the following environment variables to achieve this:
+```
+export GUEST_NAME="guest-name"
+export HOST_SSH_PORT="your-host-SSH-port"
+```
 ## Accessing the Guest via SSH
 
 Once launched, the guest can be accessed with the following SSH command:
