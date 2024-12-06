@@ -68,7 +68,8 @@ trap cleanup EXIT
 # Working directory setup
 WORKING_DIR="${WORKING_DIR:-$HOME/snp}"
 SETUP_WORKING_DIR="${SETUP_WORKING_DIR:-${WORKING_DIR}/setup}"
-LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR:-${WORKING_DIR}/launch}"
+GUEST_NAME="${GUEST_NAME:-snp-guest}"
+LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR:-${WORKING_DIR}/launch/${GUEST_NAME}}"
 ATTESTATION_WORKING_DIR="${ATTESTATION_WORKING_DIR:-${WORKING_DIR}/attest}"
 
 # Export environment variables
@@ -76,7 +77,6 @@ COMMAND="help"
 UPM=true
 SKIP_IMAGE_CREATE=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
-GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
 GUEST_MEM_SIZE_MB="${GUEST_MEM_SIZE_MB:-2048}"
 GUEST_SMP="${GUEST_SMP:-4}"
@@ -87,6 +87,7 @@ GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-ke
 GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
+BASE_CLOUD_IMAGE="${BASE_CLOUD_IMAGE:-${WORKING_DIR}/base_cloud_image.img}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
@@ -443,8 +444,8 @@ generate_guest_ssh_keypair() {
 }
 
 cloud_init_create_data() {
-  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" && \
-    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"  && \
+  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml" && \
+    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml"  && \
     -f "${IMAGE}" ]]; then
     echo -e "cloud-init data already generated"
     return 0
@@ -453,13 +454,13 @@ cloud_init_create_data() {
   local pub_key=$(cat "${GUEST_SSH_KEY_PATH}.pub")
 
 # Seed image metadata
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml" <<EOF
 instance-id: "${GUEST_NAME}"
 local-hostname: "${GUEST_NAME}"
 EOF
 
 # Seed image user data
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" <<EOF
 #cloud-config
 chpasswd:
   expire: false
@@ -477,11 +478,15 @@ EOF
 
   # Create the seed image with metadata and user data
   cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" \
+    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml"
 
   # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  if [ ! -f "${BASE_CLOUD_IMAGE}" ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O "${BASE_CLOUD_IMAGE}"
+  fi
+
+  cp -v "${BASE_CLOUD_IMAGE}" "${IMAGE}"
 }
 
 resize_guest() {
@@ -653,6 +658,9 @@ copy_launch_binaries() {
 
   # Create directory
   mkdir -p "${LAUNCH_WORKING_DIR}"
+
+  # Create a separate guest data directory
+  mkdir -p "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data"
 
   # Copy the setup generated bins to the guest launch directory
   # initrd is copied after the first guest boot and is scp-ed off
@@ -1337,7 +1345,7 @@ main() {
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
-      echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
+      echo -e "ssh -p ${HOST_SSH_PORT} -i ${GUEST_SSH_KEY_PATH} ${GUEST_USER}@localhost"
       ;;
 
     attest-guest)
