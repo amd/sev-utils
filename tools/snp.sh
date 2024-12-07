@@ -521,8 +521,8 @@ download_guest_os_image(){
 }
 
 cloud_init_create_data() {
-  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml" && \
-    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml"  && \
+  if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/meta-data" && \
+    -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data"  && \
     -f "${IMAGE}" ]]; then
     echo -e "cloud-init data already generated"
     return 0
@@ -531,13 +531,13 @@ cloud_init_create_data() {
   local pub_key=$(cat "${GUEST_SSH_KEY_PATH}.pub")
 
 # Seed image metadata
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/meta-data" <<EOF
 instance-id: "${GUEST_NAME}"
 local-hostname: "${GUEST_NAME}"
 EOF
 
 # Seed image user data
-cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" <<EOF
+cat > "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data" <<EOF
 #cloud-config
 chpasswd:
   expire: false
@@ -554,7 +554,7 @@ users:
 EOF
 
   # Create the seed image with metadata and user data using genisoimage utility
-  genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data.yaml" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/metadata.yaml"
+  genisoimage -output "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/ciiso.iso" -volid cidata -joliet -rock "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-data/meta-data"
 
   # Download Guest Image from cloud init URL
   download_guest_os_image
