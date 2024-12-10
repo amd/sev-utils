@@ -331,6 +331,8 @@ install_fedora_dependencies() {
 
   # cloud-utils dependency
   sudo dnf install -y cloud-init
+  sudo dnf install -y genisoimage
+  sudo dnf install -y qemu-img
 }
 
 get_linux_distro() {
@@ -510,6 +512,9 @@ download_guest_os_image(){
   case ${linux_distro} in
     ubuntu)
       CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+      ;;
+    fedora)
+      CLOUD_INIT_IMAGE_URL="https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2"
       ;;
   esac
 
@@ -906,6 +911,9 @@ get_package_install_command(){
     ubuntu)
       echo "dpkg -i"
       ;;
+    fedora)
+      echo "dnf install -y"
+      ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
       return 1
@@ -922,6 +930,10 @@ get_guest_kernel_package(){
       ubuntu)
           echo $(realpath linux-image*${guest_kernel_version}*.deb| grep -v dbg)
           ;;
+      fedora)
+          guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
+          echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+        ;;
       *)
         >&2 echo -e "ERROR: ${linux_distro}"
         return 1
@@ -938,6 +950,10 @@ set_default_guest_kernel_append() {
     ubuntu)
       GUEST_ROOT_LABEL="cloudimg-rootfs"
       GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
+      ;;
+    fedora)
+      GUEST_ROOT_LABEL="fedora"
+      GUEST_KERNEL_APPEND="console=ttys0 root=LABEL=${GUEST_ROOT_LABEL} ro rootflags=subvol=root"
       ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
