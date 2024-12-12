@@ -98,6 +98,9 @@ SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.8.0"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+CLOUD_INIT_IMAGE_URL_UBUNTU="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+IMAGE_BASENAME_UBUNTU=$(basename "${CLOUD_INIT_IMAGE_URL_UBUNTU}")
+IMAGE_BASENAME=""
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 SEV_SNP_MEASURE_VERSION="0.0.11"
 
@@ -503,6 +506,33 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+download_guest_os_image(){
+  local linux_distro=$(get_linux_distro)
+
+  # Set the guest OS image-cloud init URL, guest image basename based on the Host OS type
+  case ${linux_distro} in
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_UBUNTU}
+      IMAGE_BASENAME=${IMAGE_BASENAME_UBUNTU}
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+
+  local base_launch_directory=${LAUNCH_WORKING_DIR//"/$GUEST_NAME"*/}
+  local base_guest_image=${base_launch_directory}/${IMAGE_BASENAME}
+
+  # Download image if not present already
+  if [ ! -f ${base_guest_image} ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O ${base_guest_image}
+  fi
+
+  # Copy image to launch directory
+  cp -v ${base_guest_image} "${IMAGE}"
+}
+
 cloud_init_create_data() {
   if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" && \
     -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"  && \
@@ -541,8 +571,8 @@ EOF
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
     "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
 
-  # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  # Download Guest Image from cloud init URL
+  download_guest_os_image
 }
 
 resize_guest() {
