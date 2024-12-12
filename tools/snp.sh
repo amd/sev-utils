@@ -117,6 +117,8 @@ usage() {
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
   >&2 echo "    -i|--image            Path to existing image file"
+  >&2 echo "    -g-n|--guest-name     Create a separate guest launch working directory"
+  >&2 echo "    -g-p|--guest-port     Set guest qemu port for networking"
   >&2 echo "    -h|--help             Usage information"
 
   return 1
@@ -1316,6 +1318,20 @@ main() {
       -i|--image)
         IMAGE="${2}"
         SKIP_IMAGE_CREATE=true
+        shift; shift
+        ;;
+
+      -g-n|--guest-name)
+        GUEST_NAME="${2}"
+        LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
+        GUEST_SSH_KEY_PATH="${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key"
+        QEMU_CMDLINE_FILE="${LAUNCH_WORKING_DIR}/qemu.cmdline"
+        IMAGE="${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img"
+        shift; shift
+        ;;
+
+      -g-p|--guest-port)
+        HOST_SSH_PORT="${2}"
         shift; shift
         ;;
 
