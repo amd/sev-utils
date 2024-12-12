@@ -84,6 +84,12 @@ The `--non-upm` option can be specified with the above command if a non-upm vers
 of the kernel is desired. The `setup-host` command must be run with this same option 
 if launching the guest with a non-upm kernel.
 
+A user can launch separate SNP guests at the same time using unique guest name and guest qemu port.
+A user can set guest name and guest port with the `--guest-name` option and `--guest-port` option while the launch of a separate SNP guest as follows:
+```
+./snp.sh launch-guest --guest-name <user-guest-name> --guest-port <user-guest-port>
+```
+
 Attest the guest using the following command:
 ```
 ./snp.sh attest-guest
@@ -105,6 +111,10 @@ All script created guests can be stopped by running the following command:
 ./snp.sh stop-guests
 ```
 
+User created SNP guest via guest-name option can be stopped with the `--guest-name` option as follows:
+```
+./snp.sh stop-guests --guest-name <user-guest-name>
+```
 ## BYO Image
 
 The SNP script utility provides support for the user to provide their own image.
