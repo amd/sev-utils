@@ -101,6 +101,8 @@ NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.1
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 CLOUD_INIT_IMAGE_URL_UBUNTU="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
 IMAGE_BASENAME_UBUNTU=$(basename "${CLOUD_INIT_IMAGE_URL_UBUNTU}")
+CLOUD_INIT_IMAGE_URL_FEDORA="https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2"
+IMAGE_BASENAME_FEDORA=$(basename "${CLOUD_INIT_IMAGE_URL_FEDORA}")
 IMAGE_BASENAME=""
 GUEST_ROOT_LABEL_UBUNTU="cloudimg-rootfs"
 GUEST_KERNEL_APPEND_UBUNTU="root=LABEL=${GUEST_ROOT_LABEL_UBUNTU} ro console=ttyS0"
@@ -518,6 +520,20 @@ create_guest_seed_image(){
         "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
         "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
       ;;
+    fedora)
+      mv -v "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" "${LAUNCH_WORKING_DIR}/user-data"
+      mv -v "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" "${LAUNCH_WORKING_DIR}/meta-data"
+
+      genisoimage -output "${SEED_IMAGE}" \
+        -volid cidata \
+        -joliet \
+        -rock \
+        "${LAUNCH_WORKING_DIR}/user-data" \
+        "${LAUNCH_WORKING_DIR}/meta-data"
+
+      mv -v "${LAUNCH_WORKING_DIR}/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"
+      mv -v "${LAUNCH_WORKING_DIR}/meta-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+     ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
       return 1
@@ -533,6 +549,10 @@ download_guest_os_image(){
     ubuntu)
       CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_UBUNTU}
       IMAGE_BASENAME=${IMAGE_BASENAME_UBUNTU}
+      ;;
+    fedora)
+      CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_FEDORA}
+      IMAGE_BASENAME=${IMAGE_BASENAME_FEDORA}
       ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
