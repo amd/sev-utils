@@ -84,10 +84,11 @@ CPU_MODEL="${CPU_MODEL:-EPYC-v4}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
 GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key}"
-GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
+GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:""}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
+SEED_IMAGE="${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
@@ -98,6 +99,11 @@ SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.7.1"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+CLOUD_INIT_IMAGE_URL_UBUNTU="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+IMAGE_BASENAME_UBUNTU=$(basename "${CLOUD_INIT_IMAGE_URL_UBUNTU}")
+IMAGE_BASENAME=""
+GUEST_ROOT_LABEL_UBUNTU="cloudimg-rootfs"
+GUEST_KERNEL_APPEND_UBUNTU="root=LABEL=${GUEST_ROOT_LABEL_UBUNTU} ro console=ttyS0"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 SEV_SNP_MEASURE_VERSION="0.0.11"
 
@@ -117,6 +123,7 @@ usage() {
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
   >&2 echo "    -i|--image            Path to existing image file"
+  >&2 echo "    -g|--guest-name       Create a separate guest launch working directory"
   >&2 echo "    -h|--help             Usage information"
 
   return 1
@@ -501,6 +508,49 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+create_guest_seed_image(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      cloud-localds "${SEED_IMAGE}" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+download_guest_os_image(){
+  local linux_distro=$(get_linux_distro)
+
+  # Set the guest OS image-cloud init URL, guest image basename based on the Host OS type
+  case ${linux_distro} in
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_UBUNTU}
+      IMAGE_BASENAME=${IMAGE_BASENAME_UBUNTU}
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+
+  # Download guest OS image into the guest base image once
+  local base_launch_directory=${LAUNCH_WORKING_DIR//"/$GUEST_NAME"*/}
+  local base_guest_image=${base_launch_directory}/${IMAGE_BASENAME}
+
+  if [ ! -f ${base_guest_image} ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O ${base_guest_image}
+  fi
+
+  # Re-use the base guest image if guest OS image is already downloaded
+  cp -v ${base_guest_image} "${IMAGE}"
+}
+
 cloud_init_create_data() {
   if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" && \
     -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"  && \
@@ -535,12 +585,10 @@ users:
 EOF
 
   # Create the seed image with metadata and user data
-  cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+  create_guest_seed_image
 
-  # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  # Download Guest Image from cloud init URL
+  download_guest_os_image
 }
 
 resize_guest() {
@@ -879,6 +927,53 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+get_package_install_command(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      echo "dpkg -i"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+get_guest_kernel_package(){
+  local linux_distro=$(get_linux_distro)
+  local guest_kernel_version=$(get_guest_kernel_version)
+
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
+    case ${linux_distro} in
+      ubuntu)
+          echo $(realpath linux-image*${guest_kernel_version}*.deb| grep -v dbg)
+          ;;
+      *)
+        >&2 echo -e "ERROR: ${linux_distro}"
+        return 1
+        ;;
+    esac
+  popd>/dev/null
+}
+
+set_default_guest_kernel_append() {
+  local linux_distro=$(get_linux_distro)
+
+  # Sets default kernel append based on the linux distro
+  case ${linux_distro} in
+    ubuntu)
+      GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_UBUNTU}"
+      GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_UBUNTU}"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
   if [ ! -f "${IMAGE}" ] && ${SKIP_IMAGE_CREATE}; then
@@ -908,7 +1003,7 @@ setup_and_launch_guest() {
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
-    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${SEED_IMAGE}"
   fi
 
   local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
@@ -918,16 +1013,21 @@ setup_and_launch_guest() {
 
     # Install the guest kernel, retrieve the initrd and then reboot
     local guest_kernel_version=$(get_guest_kernel_version)
-    local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
-    local guest_initrd_basename="initrd.img-${guest_kernel_version}"
-    wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
+    local guest_kernel_package=$(get_guest_kernel_package)
+    local guest_initrd_basename="init*${guest_kernel_version}*"
+    local os_package_install_command=$(get_package_install_command)
+    wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
+    ssh_guest_command "sudo ${os_package_install_command} /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
     scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
     # Update the initrd file path and name in the guest launch source-bins file
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+
+    # Set the default guest kernel append parameter as per the linux distro
+    [ -z "${GUEST_ROOT_LABEL}" ] && set_default_guest_kernel_append
 
     # Wait for shutdown to complete
     wait_and_retry_command "! ps aux | grep \"${WORKING_DIR}.*qemu.*${IMAGE}\" | grep -v \"tail.*qemu.log\" | grep -v \"grep.*qemu\""
@@ -1319,6 +1419,15 @@ main() {
         shift; shift
         ;;
 
+      -g|--guest-name)
+        GUEST_NAME="${2}"
+        LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
+        GUEST_SSH_KEY_PATH="${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key"
+        QEMU_CMDLINE_FILE="${LAUNCH_WORKING_DIR}/qemu.cmdline"
+        IMAGE="${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img"
+        shift; shift
+        ;;
+
       setup-host)
         COMMAND="setup-host"
         shift
@@ -1396,7 +1505,7 @@ main() {
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
-      echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
+      echo -e "ssh -p ${HOST_SSH_PORT} -i ${GUEST_SSH_KEY_PATH} ${GUEST_USER}@localhost"
       ;;
 
     attest-guest)

@@ -84,6 +84,13 @@ The `--non-upm` option can be specified with the above command if a non-upm vers
 of the kernel is desired. The `setup-host` command must be run with this same option 
 if launching the guest with a non-upm kernel.
 
+A user can launch multiple SNP guests at the same time using unique guest name and guest qemu port. Guest qemu port can be set by the export of HOST_SSH_PORT environment variable.
+
+Then, the user can launch a separate SNP guest with the `--guest-name` option as follows:
+```
+./snp.sh launch-guest --guest-name <user-guest-name>
+```
+
 Attest the guest using the following command:
 ```
 ./snp.sh attest-guest
