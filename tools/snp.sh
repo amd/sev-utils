@@ -106,6 +106,8 @@ IMAGE_BASENAME_FEDORA=$(basename "${CLOUD_INIT_IMAGE_URL_FEDORA}")
 IMAGE_BASENAME=""
 GUEST_ROOT_LABEL_UBUNTU="cloudimg-rootfs"
 GUEST_KERNEL_APPEND_UBUNTU="root=LABEL=${GUEST_ROOT_LABEL_UBUNTU} ro console=ttyS0"
+GUEST_ROOT_LABEL_FEDORA="fedora"
+GUEST_KERNEL_APPEND_FEDORA="console=ttys0 root=LABEL=${GUEST_ROOT_LABEL_FEDORA} ro rootflags=subvol=root"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 SEV_SNP_MEASURE_VERSION="0.0.11"
 
@@ -955,6 +957,9 @@ get_package_install_command(){
     ubuntu)
       echo "dpkg -i"
       ;;
+    fedora)
+      echo "dnf install -y"
+      ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
       return 1
@@ -971,6 +976,10 @@ get_guest_kernel_package(){
       ubuntu)
           echo $(realpath linux-image*${guest_kernel_version}*.deb| grep -v dbg)
           ;;
+      fedora)
+          guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
+          echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+        ;;
       *)
         >&2 echo -e "ERROR: ${linux_distro}"
         return 1
@@ -987,6 +996,10 @@ set_default_guest_kernel_append() {
     ubuntu)
       GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_UBUNTU}"
       GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_UBUNTU}"
+      ;;
+    fedora)
+      GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_FEDORA}"
+      GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_FEDORA}"
       ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
@@ -1039,12 +1052,21 @@ setup_and_launch_guest() {
     local os_package_install_command=$(get_package_install_command)
     wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
     ssh_guest_command "sudo ${os_package_install_command} /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+
+    # Copy the guest initrd in the guest home directory into the host
+    local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
+    initrd_filepath=$(echo ${initrd_filepath}| tr -d '\r')
+    ssh_guest_command "sudo cp $(realpath ${initrd_filepath}) /home/${GUEST_USER}"
+    ssh_guest_command "sudo chmod 644 /home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))"
+    scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
+
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
-    # Update the initrd file path and name in the guest launch source-bins file
+    # Update the initrd file path and name(initrd/initramfs) in the guest launch source-bins file
+    guest_initrd_basename=$(basename $(realpath ${initrd_filepath}))
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    INITRD_BIN="${LAUNCH_WORKING_DIR}/${guest_initrd_basename}"
 
     # Wait for shutdown to complete
     wait_and_retry_command "! ps aux | grep \"${WORKING_DIR}.*qemu.*${IMAGE}\" | grep -v \"tail.*qemu.log\" | grep -v \"grep.*qemu\""
