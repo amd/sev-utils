@@ -88,6 +88,7 @@ GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
+SEED_IMAGE="${SEED_IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
@@ -506,6 +507,22 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+create_guest_seed_image(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      cloud-localds "${SEED_IMAGE}" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
 download_guest_os_image(){
   local linux_distro=$(get_linux_distro)
 
@@ -567,9 +584,7 @@ users:
 EOF
 
   # Create the seed image with metadata and user data
-  cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+  create_guest_seed_image
 
   # Download Guest Image from cloud init URL
   download_guest_os_image
@@ -940,7 +955,7 @@ setup_and_launch_guest() {
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
-    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${SEED_IMAGE}"
   fi
 
   local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
