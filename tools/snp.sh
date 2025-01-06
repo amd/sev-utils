@@ -75,6 +75,7 @@ ATTESTATION_WORKING_DIR="${ATTESTATION_WORKING_DIR:-${WORKING_DIR}/attest}"
 COMMAND="help"
 UPM=true
 SKIP_IMAGE_CREATE=false
+IS_RHEL_IMAGE=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
 GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
@@ -108,6 +109,8 @@ GUEST_ROOT_LABEL_UBUNTU="cloudimg-rootfs"
 GUEST_KERNEL_APPEND_UBUNTU="root=LABEL=${GUEST_ROOT_LABEL_UBUNTU} ro console=ttyS0"
 GUEST_ROOT_LABEL_FEDORA="fedora"
 GUEST_KERNEL_APPEND_FEDORA="console=ttys0 root=LABEL=${GUEST_ROOT_LABEL_FEDORA} ro rootflags=subvol=root"
+GUEST_ROOT_LABEL_RHEL="root"
+GUEST_KERNEL_APPEND_RHEL="root=LABEL=${GUEST_ROOT_LABEL_RHEL} ro console=ttyS0"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 SEV_SNP_MEASURE_VERSION="0.0.11"
 
@@ -127,6 +130,7 @@ usage() {
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
   >&2 echo "    -i|--image            Path to existing image file"
+  >&2 echo "    -r-i|--rhel-image     Path to existing red hat image file on red hat host"
   >&2 echo "    -g-n|--guest-name     Create a separate guest launch working directory"
   >&2 echo "    -g-p|--guest-port     Set guest qemu port for networking"
   >&2 echo "    -h|--help             Usage information"
@@ -960,6 +964,12 @@ get_package_install_command(){
     fedora)
       echo "dnf install -y"
       ;;
+    rhel)
+      if [ ${IS_RHEL_IMAGE} = "true" ]; then
+        echo "dnf install -y"
+        return
+      fi
+      ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
       return 1
@@ -979,6 +989,13 @@ get_guest_kernel_package(){
       fedora)
           guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
           echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+        ;;
+      rhel)
+        if [ ${IS_RHEL_IMAGE} = "true" ]; then
+          guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
+          echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+          return
+        fi
         ;;
       *)
         >&2 echo -e "ERROR: ${linux_distro}"
@@ -1000,6 +1017,13 @@ set_default_guest_kernel_append() {
     fedora)
       GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_FEDORA}"
       GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_FEDORA}"
+      ;;
+    rhel)
+      if [ ${IS_RHEL_IMAGE} = "true" ]; then
+        GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_RHEL}"
+        GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_RHEL}"
+        return
+      fi
       ;;
     *)
       >&2 echo -e "ERROR: ${linux_distro}"
@@ -1458,6 +1482,13 @@ main() {
       -i|--image)
         IMAGE="${2}"
         SKIP_IMAGE_CREATE=true
+        shift; shift
+        ;;
+
+      -r-i|--rhel-image)
+        IMAGE="${2}"
+        SKIP_IMAGE_CREATE=true
+        IS_RHEL_IMAGE=true
         shift; shift
         ;;
 
