@@ -131,8 +131,11 @@ usage() {
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
   >&2 echo "    -i|--image            Path to existing image file"
   >&2 echo "    -r-i|--rhel-image     Path to existing red hat image file on red hat host"
+  >&2 echo "    -glwd|--guest-dir     Path to guest image launch working directory"
   >&2 echo "    -g-n|--guest-name     Create a separate guest launch working directory"
   >&2 echo "    -g-p|--guest-port     Set guest qemu port for networking"
+  >&2 echo "    -g-k|--guest-key-path Set guest SSH key path to access the guest"
+  >&2 echo "    -g-u|--guest-user     Set guest user name of the guest image"
   >&2 echo "    -h|--help             Usage information"
 
   return 1
@@ -1492,6 +1495,12 @@ main() {
         shift; shift
         ;;
 
+      -glwd|--guest-dir)
+        LAUNCH_WORKING_DIR="${2}"
+        QEMU_CMDLINE_FILE="${LAUNCH_WORKING_DIR}/qemu.cmdline"
+        shift; shift
+        ;;
+
       -g-n|--guest-name)
         GUEST_NAME="${2}"
         LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
@@ -1504,6 +1513,16 @@ main() {
 
       -g-p|--guest-port)
         HOST_SSH_PORT="${2}"
+        shift; shift
+        ;;
+
+      -g-k|--guest-key-path)
+        GUEST_SSH_KEY_PATH="${2}"
+        shift; shift
+        ;;
+
+      -g-u|--guest-user)
+        GUEST_USER="${2}"
         shift; shift
         ;;
 
