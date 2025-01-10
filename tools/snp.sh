@@ -778,6 +778,12 @@ KERNEL_BIN="${guest_kernel}"
 EOF
 }
 
+guest_lauch_pre_cleanup() {
+  local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
+  rm -rf "${guest_kernel_installed_file}"
+  rm -rf "${LAUNCH_WORKING_DIR}/source-bins"
+}
+
 copy_launch_binaries() {
   # Source the bins generated from setup
   source "${SETUP_WORKING_DIR}/source-bins"
@@ -1591,6 +1597,9 @@ main() {
         echo -e "Setup directory does not exist, please run 'setup-host' prior to 'launch-guest'"
         return 1
       fi
+
+      # Cleanup steps to enable SNP ubuntu/RH guest launch from the RHEL host
+      guest_lauch_pre_cleanup
 
       copy_launch_binaries
       source "${LAUNCH_WORKING_DIR}/source-bins"
