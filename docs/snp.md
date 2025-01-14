@@ -62,6 +62,18 @@ Setup the host by building SNP patched versions of qemu, ovmf and the linux kern
 The `--non-upm` option can be specified with the above command if a non-upm version 
 of the kernel is desired.
 
+The `--upstream-kernel` option can be specified with the above command if an upstream kernel version from the master branch is desired.
+
+```
+./snp.sh setup-host --upstream-kernel
+```
+
+The `--upstream-kernel-tag` option can be specified with the above command to install specific tag version from the upstream kernel:
+
+```
+./snp.sh setup-host --upstream-kernel-tag <specific kernel tag>
+```
+
 The above step will also change the default grub entry to the newly installed 
 host kernel.
 
