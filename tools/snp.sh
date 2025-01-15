@@ -75,6 +75,7 @@ ATTESTATION_WORKING_DIR="${ATTESTATION_WORKING_DIR:-${WORKING_DIR}/attest}"
 COMMAND="help"
 UPM=true
 SKIP_IMAGE_CREATE=false
+IS_RHEL_IMAGE=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
 GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
@@ -84,10 +85,11 @@ CPU_MODEL="${CPU_MODEL:-EPYC-v4}"
 GUEST_USER="${GUEST_USER:-amd}"
 GUEST_PASS="${GUEST_PASS:-amd}"
 GUEST_SSH_KEY_PATH="${GUEST_SSH_KEY_PATH:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key}"
-GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:-cloudimg-rootfs}"
+GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL:""}"
 GUEST_KERNEL_APPEND="root=LABEL=${GUEST_ROOT_LABEL} ro console=ttyS0"
 QEMU_CMDLINE_FILE="${QEMU_CMDLINE:-${LAUNCH_WORKING_DIR}/qemu.cmdline}"
 IMAGE="${IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img}"
+SEED_IMAGE="${SEED_IMAGE:-${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img}"
 GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
@@ -98,6 +100,17 @@ SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.8.0"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
 CLOUD_INIT_IMAGE_URL="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+CLOUD_INIT_IMAGE_URL_UBUNTU="https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+IMAGE_BASENAME_UBUNTU=$(basename "${CLOUD_INIT_IMAGE_URL_UBUNTU}")
+CLOUD_INIT_IMAGE_URL_FEDORA="https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2"
+IMAGE_BASENAME_FEDORA=$(basename "${CLOUD_INIT_IMAGE_URL_FEDORA}")
+IMAGE_BASENAME=""
+GUEST_ROOT_LABEL_UBUNTU="cloudimg-rootfs"
+GUEST_KERNEL_APPEND_UBUNTU="root=LABEL=${GUEST_ROOT_LABEL_UBUNTU} ro console=ttyS0"
+GUEST_ROOT_LABEL_FEDORA="fedora"
+GUEST_KERNEL_APPEND_FEDORA="console=ttys0 root=LABEL=${GUEST_ROOT_LABEL_FEDORA} ro rootflags=subvol=root"
+GUEST_ROOT_LABEL_RHEL="root"
+GUEST_KERNEL_APPEND_RHEL="root=LABEL=${GUEST_ROOT_LABEL_RHEL} ro console=ttyS0"
 DRACUT_TARBALL_URL="https://github.com/dracutdevs/dracut/archive/refs/tags/059.tar.gz"
 SEV_SNP_MEASURE_VERSION="0.0.11"
 
@@ -117,6 +130,12 @@ usage() {
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
   >&2 echo "    -i|--image            Path to existing image file"
+  >&2 echo "    -r-i|--rhel-image     Path to existing red hat image file on red hat host"
+  >&2 echo "    -glwd|--guest-dir     Path to guest image launch working directory"
+  >&2 echo "    -g-n|--guest-name     Create a separate guest launch working directory"
+  >&2 echo "    -g-p|--guest-port     Set guest qemu port for networking"
+  >&2 echo "    -g-k|--guest-key-path Set guest SSH key path to access the guest"
+  >&2 echo "    -g-u|--guest-user     Set guest user name of the guest image"
   >&2 echo "    -h|--help             Usage information"
 
   return 1
@@ -501,6 +520,67 @@ generate_guest_ssh_keypair() {
   ssh-keygen -q -t ed25519 -N '' -f "${GUEST_SSH_KEY_PATH}" <<<y
 }
 
+create_guest_seed_image(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      cloud-localds "${SEED_IMAGE}" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
+        "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+      ;;
+    fedora)
+      mv -v "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" "${LAUNCH_WORKING_DIR}/user-data"
+      mv -v "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" "${LAUNCH_WORKING_DIR}/meta-data"
+
+      genisoimage -output "${SEED_IMAGE}" \
+        -volid cidata \
+        -joliet \
+        -rock \
+        "${LAUNCH_WORKING_DIR}/user-data" \
+        "${LAUNCH_WORKING_DIR}/meta-data"
+
+      mv -v "${LAUNCH_WORKING_DIR}/user-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"
+      mv -v "${LAUNCH_WORKING_DIR}/meta-data" "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+     ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+download_guest_os_image(){
+  local linux_distro=$(get_linux_distro)
+
+  # Set the guest OS image-cloud init URL, guest image basename based on the Host OS type
+  case ${linux_distro} in
+    ubuntu)
+      CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_UBUNTU}
+      IMAGE_BASENAME=${IMAGE_BASENAME_UBUNTU}
+      ;;
+    fedora)
+      CLOUD_INIT_IMAGE_URL=${CLOUD_INIT_IMAGE_URL_FEDORA}
+      IMAGE_BASENAME=${IMAGE_BASENAME_FEDORA}
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+
+  local base_launch_directory=${LAUNCH_WORKING_DIR//"/$GUEST_NAME"*/}
+  local base_guest_image=${base_launch_directory}/${IMAGE_BASENAME}
+
+  # Download image if not present already
+  if [ ! -f ${base_guest_image} ]; then
+    wget "${CLOUD_INIT_IMAGE_URL}" -O ${base_guest_image}
+  fi
+
+  # Copy image to launch directory
+  cp -v ${base_guest_image} "${IMAGE}"
+}
+
 cloud_init_create_data() {
   if [[ -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml" && \
     -f "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml"  && \
@@ -535,12 +615,10 @@ users:
 EOF
 
   # Create the seed image with metadata and user data
-  cloud-localds "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-user-data.yaml" \
-    "${LAUNCH_WORKING_DIR}/${GUEST_NAME}-metadata.yaml"
+  create_guest_seed_image
 
-  # Download ubuntu 20.04 and change name
-  wget "${CLOUD_INIT_IMAGE_URL}" -O "${IMAGE}"
+  # Download Guest Image from cloud init URL
+  download_guest_os_image
 }
 
 resize_guest() {
@@ -698,6 +776,12 @@ OVMF_BIN="${SETUP_WORKING_DIR}/AMDSEV/ovmf/Build/AmdSev/DEBUG_GCC5/FV/OVMF.fd"
 INITRD_BIN="${GENERATED_INITRD_BIN}"
 KERNEL_BIN="${guest_kernel}"
 EOF
+}
+
+guest_lauch_pre_cleanup() {
+  local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
+  rm -rf "${guest_kernel_installed_file}"
+  rm -rf "${LAUNCH_WORKING_DIR}/source-bins"
 }
 
 copy_launch_binaries() {
@@ -879,6 +963,84 @@ build_and_install_amdsev() {
   save_binary_paths
 }
 
+get_package_install_command(){
+  local linux_distro=$(get_linux_distro)
+
+  case ${linux_distro} in
+    ubuntu)
+      echo "dpkg -i"
+      ;;
+    fedora)
+      echo "dnf install -y"
+      ;;
+    rhel)
+      if [ ${IS_RHEL_IMAGE} = "true" ]; then
+        echo "dnf install -y"
+        return
+      fi
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+get_guest_kernel_package(){
+  local linux_distro=$(get_linux_distro)
+  local guest_kernel_version=$(get_guest_kernel_version)
+
+  pushd "${SETUP_WORKING_DIR}/AMDSEV/linux" >/dev/null
+    case ${linux_distro} in
+      ubuntu)
+          echo $(realpath linux-image*${guest_kernel_version}*.deb| grep -v dbg)
+          ;;
+      fedora)
+          guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
+          echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+        ;;
+      rhel)
+        if [ ${IS_RHEL_IMAGE} = "true" ]; then
+          guest_kernel_version="${guest_kernel_version//-/_}" # SNP kernel RPM package name contains _ in the version
+          echo $(realpath $(ls -t kernel-*${guest_kernel_version}*.rpm| grep -v header| head -1))
+          return
+        fi
+        ;;
+      *)
+        >&2 echo -e "ERROR: ${linux_distro}"
+        return 1
+        ;;
+    esac
+  popd>/dev/null
+}
+
+set_default_guest_kernel_append() {
+  local linux_distro=$(get_linux_distro)
+
+  # Sets default kernel append based on the linux distro
+  case ${linux_distro} in
+    ubuntu)
+      GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_UBUNTU}"
+      GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_UBUNTU}"
+      ;;
+    fedora)
+      GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_FEDORA}"
+      GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_FEDORA}"
+      ;;
+    rhel)
+      if [ ${IS_RHEL_IMAGE} = "true" ]; then
+        GUEST_ROOT_LABEL="${GUEST_ROOT_LABEL_RHEL}"
+        GUEST_KERNEL_APPEND="${GUEST_KERNEL_APPEND_RHEL}"
+        return
+      fi
+      ;;
+    *)
+      >&2 echo -e "ERROR: ${linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
 setup_and_launch_guest() {
   # Return error if user specified file that doesn't exist
   if [ ! -f "${IMAGE}" ] && ${SKIP_IMAGE_CREATE}; then
@@ -908,7 +1070,7 @@ setup_and_launch_guest() {
 
     # Add seed image option to qemu cmdline
     add_qemu_cmdline_opts "-device scsi-hd,drive=disk1"
-    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+    add_qemu_cmdline_opts "-drive if=none,id=disk1,format=raw,file=${SEED_IMAGE}"
   fi
 
   local guest_kernel_installed_file="${LAUNCH_WORKING_DIR}/guest_kernel_already_installed"
@@ -918,16 +1080,26 @@ setup_and_launch_guest() {
 
     # Install the guest kernel, retrieve the initrd and then reboot
     local guest_kernel_version=$(get_guest_kernel_version)
-    local guest_kernel_deb=$(echo "$(realpath ${SETUP_WORKING_DIR}/AMDSEV/linux/linux-image*snp-guest*.deb)" | grep -v dbg)
-    local guest_initrd_basename="initrd.img-${guest_kernel_version}"
-    wait_and_retry_command "scp_guest_command ${guest_kernel_deb} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
-    ssh_guest_command "sudo dpkg -i /home/${GUEST_USER}/$(basename ${guest_kernel_deb})"
-    scp_guest_command "${GUEST_USER}@localhost:/boot/${guest_initrd_basename}" "${LAUNCH_WORKING_DIR}"
+    local guest_kernel_package=$(get_guest_kernel_package)
+    local guest_initrd_basename="init*${guest_kernel_version}*"
+    local os_package_install_command=$(get_package_install_command)
+    wait_and_retry_command "scp_guest_command ${guest_kernel_package} ${GUEST_USER}@localhost:/home/${GUEST_USER}"
+    ssh_guest_command "sudo ${os_package_install_command} /home/${GUEST_USER}/$(basename ${guest_kernel_package})"
+
+    # Copy the guest initrd in the guest home directory into the host
+    local initrd_filepath=$(ssh_guest_command "ls /boot/${guest_initrd_basename} | grep -v kdump")
+    initrd_filepath=$(echo ${initrd_filepath}| tr -d '\r')
+    ssh_guest_command "sudo cp $(realpath ${initrd_filepath}) /home/${GUEST_USER}"
+    ssh_guest_command "sudo chmod 644 /home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))"
+    scp_guest_command "${GUEST_USER}@localhost:/home/${GUEST_USER}/$(basename $(realpath ${initrd_filepath}))" "${LAUNCH_WORKING_DIR}"
+
     ssh_guest_command "sudo shutdown now" || true
     echo "true" > "${guest_kernel_installed_file}"
 
-    # Update the initrd file path and name in the guest launch source-bins file
+    # Update the initrd file path and name(initrd/initramfs) in the guest launch source-bins file
+    guest_initrd_basename=$(basename $(realpath ${initrd_filepath}))
     sed -i -e "s|^\(INITRD_BIN=\).*$|\1\"${LAUNCH_WORKING_DIR}/${guest_initrd_basename}\"|g" "${LAUNCH_WORKING_DIR}/source-bins"
+    INITRD_BIN="${LAUNCH_WORKING_DIR}/${guest_initrd_basename}"
 
     # Wait for shutdown to complete
     wait_and_retry_command "! ps aux | grep \"${WORKING_DIR}.*qemu.*${IMAGE}\" | grep -v \"tail.*qemu.log\" | grep -v \"grep.*qemu\""
@@ -936,6 +1108,9 @@ setup_and_launch_guest() {
     setup_and_launch_guest
     return 0
   fi
+
+  # Set the default guest kernel append parameter as per the linux distro
+  [ -z "${GUEST_ROOT_LABEL}" ] && set_default_guest_kernel_append
 
   # Add sev-guest module to host generated initrd
   # To be used as the guest initrd
@@ -1319,6 +1494,44 @@ main() {
         shift; shift
         ;;
 
+      -r-i|--rhel-image)
+        IMAGE="${2}"
+        SKIP_IMAGE_CREATE=true
+        IS_RHEL_IMAGE=true
+        shift; shift
+        ;;
+
+      -glwd|--guest-dir)
+        LAUNCH_WORKING_DIR="${2}"
+        QEMU_CMDLINE_FILE="${LAUNCH_WORKING_DIR}/qemu.cmdline"
+        shift; shift
+        ;;
+
+      -g-n|--guest-name)
+        GUEST_NAME="${2}"
+        LAUNCH_WORKING_DIR="${LAUNCH_WORKING_DIR}/${GUEST_NAME}"
+        GUEST_SSH_KEY_PATH="${LAUNCH_WORKING_DIR}/${GUEST_NAME}-key"
+        QEMU_CMDLINE_FILE="${LAUNCH_WORKING_DIR}/qemu.cmdline"
+        IMAGE="${LAUNCH_WORKING_DIR}/${GUEST_NAME}.img"
+        SEED_IMAGE="${LAUNCH_WORKING_DIR}/${GUEST_NAME}-seed.img"
+        shift; shift
+        ;;
+
+      -g-p|--guest-port)
+        HOST_SSH_PORT="${2}"
+        shift; shift
+        ;;
+
+      -g-k|--guest-key-path)
+        GUEST_SSH_KEY_PATH="${2}"
+        shift; shift
+        ;;
+
+      -g-u|--guest-user)
+        GUEST_USER="${2}"
+        shift; shift
+        ;;
+
       setup-host)
         COMMAND="setup-host"
         shift
@@ -1385,6 +1598,9 @@ main() {
         return 1
       fi
 
+      # Cleanup steps to enable SNP ubuntu/RH guest launch from the RHEL host
+      guest_lauch_pre_cleanup
+
       copy_launch_binaries
       source "${LAUNCH_WORKING_DIR}/source-bins"
 
@@ -1396,7 +1612,7 @@ main() {
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
       echo -e "The guest is running in the background. Use the following command to access via SSH:"
-      echo -e "ssh -p ${HOST_SSH_PORT} -i ${LAUNCH_WORKING_DIR}/snp-guest-key amd@localhost"
+      echo -e "ssh -p ${HOST_SSH_PORT} -i ${GUEST_SSH_KEY_PATH} ${GUEST_USER}@localhost"
       ;;
 
     attest-guest)
