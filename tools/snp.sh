@@ -92,7 +92,7 @@ GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 
 # URLs and repos
 AMDSEV_URL="https://github.com/confidential-containers/amdese-amdsev.git"
-AMDSEV_DEFAULT_BRANCH="amd-snp"
+AMDSEV_DEFAULT_BRANCH="amd-snp-202501150000"
 AMDSEV_NON_UPM_BRANCH="amd-snp-202306070000"
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.8.0"
