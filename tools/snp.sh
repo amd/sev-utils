@@ -171,6 +171,26 @@ verify_all_security_bits() {
   fi
 }
 
+verify_host_snp_support() {
+  echo -e "Verifying host CPU support for SNP from CPUID 0x8000001f ..."
+  local host_cpuid_eax=$(get_cpuid 0x8000001f eax)
+
+  # Map all the security bit values in a single associative array
+  declare -A security_bit_values=(
+    [SME]=$(( (${host_cpuid_eax} >> 0) & 1))
+    [SEV]=$(( (${host_cpuid_eax} >> 1) & 1))
+    [SEV-ES]=$(( (${host_cpuid_eax} >> 3) & 1))
+    [SNP]=$(( (${host_cpuid_eax} >> 4) & 1))
+  )
+
+  local feature_error=$(verify_all_security_bits "${security_bit_values[@]}")
+  if [[ -n "${feature_error}" ]]; then
+    >&2 echo -e "ERROR: SNP feature is not supported by the host CPU"
+    >&2 echo -e "${feature_error}"
+    return 1
+  fi
+}
+
 verify_snp_host() {
   if ! sudo dmesg | grep -i "SEV-SNP enabled\|SEV-SNP supported" 2>&1 >/dev/null; then
     echo -e "SEV-SNP not enabled on the host. Please follow these steps to enable:\n\
@@ -1381,6 +1401,7 @@ main() {
       ;;
 
     setup-host)
+      verify_host_snp_support
       install_dependencies
 
       if $UPM; then
