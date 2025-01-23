@@ -156,6 +156,21 @@ cleanup() {
   return $exit_code
 }
 
+verify_all_security_bits() {
+
+  local feature_error=''
+  for feature in "${!security_bit_values[@]}"
+  do
+    if [[ ${security_bit_values[$feature]} != 1 ]]; then
+        feature_error+=$(echo "${feature} bit value is ${security_bit_values[$feature]} .\n");
+    fi
+  done
+
+  if [[ -n "${feature_error}" ]]; then
+    echo ${feature_error}
+  fi
+}
+
 verify_snp_host() {
   if ! sudo dmesg | grep -i "SEV-SNP enabled\|SEV-SNP supported" 2>&1 >/dev/null; then
     echo -e "SEV-SNP not enabled on the host. Please follow these steps to enable:\n\
