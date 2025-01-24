@@ -1158,6 +1158,55 @@ setup_guest_attestation() {
   echo "true" > "${guest_setup_file}"
 }
 
+install_guest_rdmsr_dependencies() {
+  wait_and_retry_command "ssh_guest_command "uname -r""
+
+  # Retrieve guest linux distribution
+  local guest_linux_distro=$(ssh_guest_command "lsb_release -is")
+  guest_linux_distro=$(echo "${guest_linux_distro}" | tr -d '\r')
+  guest_linux_distro="${guest_linux_distro,,}"
+
+  case ${guest_linux_distro} in
+    ubuntu)
+      ssh_guest_command "sudo DEBIAN_FRONTEND=noninteractive sudo apt install -y msr-tools > /dev/null 2>&1" > /dev/null 2>&1
+      ;;
+    *)
+      >&2 echo -e "ERROR: Unsupported guest linux distribution: ${guest_linux_distro}"
+      return 1
+      ;;
+  esac
+}
+
+verify_guest_snp_bit_status() {
+  if [ ! -f "${GUEST_SSH_KEY_PATH}" ]; then
+    >&2 echo -e "Guest SSH key not present [${GUEST_SSH_KEY_PATH}], so cannot verify guest SNP enabled"
+    return 1
+  fi
+
+  # Install guest rdmsr package dependencies & insert guest msr module
+  install_guest_rdmsr_dependencies
+  ssh_guest_command "sudo modprobe msr" > /dev/null 2>&1
+
+  # Read the guest (MSR_AMD64_SEV) value
+  local guest_msr_read=$(ssh_guest_command "sudo rdmsr -p 0 0xc0010131")
+  guest_msr_read=$(echo "${guest_msr_read}" | tr -d '\r' | bc)
+
+  # Map all the security bit values in a single associative array
+  declare -A security_bit_values=(
+    [SEV]=$(( ( ${guest_msr_read} >> 0) & 1))
+    [SEV-ES]=$(( (${guest_msr_read} >> 1) & 1))
+    [SNP]=$(( (${guest_msr_read} >> 2) & 1))
+  )
+
+  local feature_error=$(verify_all_security_bits "${security_bit_values[@]}")
+
+  if [[ -n "${feature_error}" ]]; then
+    >&2 echo -e "ERROR: SEV/SEV-ES/SNP is not active in the guest"
+    >&2 echo -e "${feature_error}"
+    return 1
+  fi
+}
+
 # Pass a function and a register to collect its value
 get_cpuid() {
   local function=$1
@@ -1454,6 +1503,7 @@ main() {
       install_dependencies
 
       setup_and_launch_guest
+      verify_guest_snp_bit_status
       wait_and_retry_command verify_snp_guest
 
       echo -e "Guest SSH port forwarded to host port: ${HOST_SSH_PORT}"
@@ -1465,6 +1515,7 @@ main() {
       install_rust
       install_sev_snp_measure
       install_dependencies
+      verify_guest_snp_bit_status
       wait_and_retry_command verify_snp_guest
       setup_guest_attestation
       attest_guest
