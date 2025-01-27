@@ -75,6 +75,7 @@ ATTESTATION_WORKING_DIR="${ATTESTATION_WORKING_DIR:-${WORKING_DIR}/attest}"
 COMMAND="help"
 UPM=true
 SKIP_IMAGE_CREATE=false
+SET_KERNEL_UPSTREAM=false
 HOST_SSH_PORT="${HOST_SSH_PORT:-10022}"
 GUEST_NAME="${GUEST_NAME:-snp-guest}"
 GUEST_SIZE_GB="${GUEST_SIZE_GB:-20}"
@@ -94,6 +95,9 @@ GENERATED_INITRD_BIN="${SETUP_WORKING_DIR}/initrd.img"
 AMDSEV_URL="https://github.com/confidential-containers/amdese-amdsev.git"
 AMDSEV_DEFAULT_BRANCH="amd-snp"
 AMDSEV_NON_UPM_BRANCH="amd-snp-202306070000"
+UPSTREAM_KERNEL_GIT_URL="https://github.com/torvalds/linux.git"
+UPSTREAM_KERNEL_BRANCH="master"
+UPSTREAM_KERNEL_TAG=""
 SNPGUEST_URL="https://github.com/virtee/snpguest.git"
 SNPGUEST_BRANCH="tags/v0.8.0"
 NASM_SOURCE_TAR_URL="https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/nasm-2.16.01.tar.gz"
@@ -116,6 +120,8 @@ usage() {
   >&2 echo "    stop-guests           Stop all SNP guests started by this script"
   >&2 echo "  where OPTIONS are:"
   >&2 echo "    -n|--non-upm          Build AMDSEV non UPM kernel (sev-snp-devel)"
+  >&2 echo "    --upstream-kernel     Build upstream kernel from the master branch"
+  >&2 echo "    --upstream-kernel-tag Build upstream kernel from the desired kernel tag version"
   >&2 echo "    -i|--image            Path to existing image file"
   >&2 echo "    -h|--help             Usage information"
 
@@ -816,6 +822,42 @@ set_acl_for_sev_device() {
   echo "${setfacl_command}" | sudo tee -a "${rc_local_file}" >/dev/null
 }
 
+# Checks if the kernel tag exists in the kernel upstream using the kernel tag URL HTTP status code
+verify_upstream_kernel_tag() {
+  local kernel_tag_url="https://github.com/torvalds/linux/tree/${UPSTREAM_KERNEL_TAG}"
+  local kernel_tag_http_status_code=$(curl -s --head "${kernel_tag_url}" | head -n 1 | grep "HTTP" | awk '{print $2}')
+
+  # Kernel tag doesn't exist if the HTTP status code is other than 200
+  if [ ${kernel_tag_http_status_code} -ne 200 ]; then
+    >&2 echo -e "ERROR: ${UPSTREAM_KERNEL_TAG} doesn't exist in the upstream repository"
+    return 1
+  fi
+}
+
+set_snp_kernel_upstream() {
+  local amsev_stable_commits_file="${SETUP_WORKING_DIR}/AMDSEV/stable-commits"
+
+  # Validate that the stable-commits file exists
+  if [[ ! -f "${amsev_stable_commits_file}" ]]; then
+    >&2 echo -e "ERROR: The file '${amsev_stable_commits_file}' does not exist."
+    return 1
+  fi
+
+  # Set kernel URL to the upstream kernel
+  sed -i -e "s|^\(KERNEL_GIT_URL=\).*$|\1\"${UPSTREAM_KERNEL_GIT_URL}\"|g" "${amsev_stable_commits_file}"
+
+  # Set SNP kernel default branch to the  kernel tagged input version if specified or the upstream default branch
+  if [[ -n "${UPSTREAM_KERNEL_TAG}" ]]; then
+    sed -i -e "s|^\(KERNEL_HOST_BRANCH=\).*$|\1\"${UPSTREAM_KERNEL_TAG}\"|g" "${amsev_stable_commits_file}"
+    sed -i -e "s|^\(KERNEL_GUEST_BRANCH=\).*$|\1\"${UPSTREAM_KERNEL_TAG}\"|g" "${amsev_stable_commits_file}"
+  else
+    sed -i -e "s|^\(KERNEL_HOST_BRANCH=\).*$|\1\"${UPSTREAM_KERNEL_BRANCH}\"|g" "${amsev_stable_commits_file}"
+    sed -i -e "s|^\(KERNEL_GUEST_BRANCH=\).*$|\1\"${UPSTREAM_KERNEL_BRANCH}\"|g" "${amsev_stable_commits_file}"
+  fi
+
+  echo "Successfully updated SNP kernel upstream branches in '${amsev_stable_commits_file}'."
+}
+
 build_and_install_amdsev() {
   local amdsev_branch="${1:-${AMDSEV_DEFAULT_BRANCH}}"
 
@@ -838,6 +880,9 @@ build_and_install_amdsev() {
   # Based on latest AMDSEV documentation
   # Delete the ovmf/ directory prior to the build step for ovmf re-initialization
   [ ! -d "ovmf" ] || rm -rf "ovmf"
+
+  # Set kernel source to the upstream kernel
+  ! ${SET_KERNEL_UPSTREAM} || set_snp_kernel_upstream
 
   # Build and copy files
   ./build.sh --package
@@ -1316,6 +1361,18 @@ main() {
       -i|--image)
         IMAGE="${2}"
         SKIP_IMAGE_CREATE=true
+        shift; shift
+        ;;
+
+      --upstream-kernel)
+        SET_KERNEL_UPSTREAM="true"
+        shift;
+        ;;
+
+      --upstream-kernel-tag)
+        SET_KERNEL_UPSTREAM="true"
+        UPSTREAM_KERNEL_TAG="${2}"
+        verify_upstream_kernel_tag
         shift; shift
         ;;
 
