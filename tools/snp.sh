@@ -203,7 +203,7 @@ install_sev_snp_measure() {
   # Install sev-snp-measure
   # pip issue on 20.04 - some openssl bug
   #sudo rm -f "/usr/lib/python3/dist-packages/OpenSSL/crypto.py"
-  pip install sev-snp-measure==${SEV_SNP_MEASURE_VERSION}
+  pip install --break-system-packages sev-snp-measure==${SEV_SNP_MEASURE_VERSION}
 }
 
 install_ubuntu_dependencies() {
@@ -226,7 +226,7 @@ install_ubuntu_dependencies() {
 
   # kernel dependencies
   sudo apt install -y bc rsync
-  sudo apt install -y flex bison libncurses-dev libssl-dev libelf-dev dwarves zstd debhelper
+  sudo apt install -y flex bison libncurses-dev libssl-dev libelf-dev dwarves zstd debhelper libdw-dev
 
   # dracut dependencies
   # dracut-core in native distro package manager too old with many issues. It is now
@@ -257,7 +257,7 @@ install_ubuntu_dependencies() {
   sudo apt install -y cpuid
 
   # Needed to build 6.11.0-rc3 SNP kernel on the host
-  pip install tomli
+  pip install --break-system-packages tomli
 }
 
 install_rhel_dependencies() {
@@ -298,7 +298,7 @@ install_rhel_dependencies() {
   sudo dnf install -y python3-pip
 
   # Needed to build 6.11.0-rc3 SNP kernel on the host
-  pip install tomli
+  pip install --break-system-packages tomli
 }
 
 install_fedora_dependencies() {
